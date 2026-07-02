@@ -5,14 +5,18 @@ import {
   EVENTO_TIPO,
   type EventoTipo,
   MOTIVOS_REQUIEREN_TEXTO,
+  PAIS_CONFIG_DEFAULT,
+  type PaisConfig,
   STANDBY_MOTIVOS,
   STANDBY_MOTIVO_LABEL,
   type StandbyMotivo,
   type Subtipo,
   botonesDe,
   labelEvento,
+  paisConfigDe,
 } from "@/lib/catalogos";
 import { fechaHoy } from "@/lib/tiempo";
+import { createClient } from "@/lib/supabase/client";
 import { registrarEvento } from "@/lib/offline/registrarEvento";
 import {
   ESTADO_INICIAL,
@@ -26,17 +30,26 @@ import {
   type AsignacionCache,
   leerAeros,
   leerAsignacion,
+  leerPaisesConfig,
   leerPerfil,
+  limpiarSesion,
 } from "@/lib/offline/sesion";
 import { sync } from "@/lib/offline/sync";
 import { SyncIndicator } from "./SyncIndicator";
 
 // Acciones que abren un modal antes de registrar.
-type Modal = null | "aero" | "standby" | "salida" | "finalizar";
+type Modal = null | "aero" | "standby" | "salida" | "finalizar" | "logout";
 
-export function CheckIn({ onFinalizado }: { onFinalizado: () => void }) {
+export function CheckIn({
+  onFinalizado,
+  onLogout,
+}: {
+  onFinalizado: () => void;
+  onLogout: () => void;
+}) {
   const [asignacion, setAsignacion] = useState<AsignacionCache | null>(null);
   const [subtipo, setSubtipo] = useState<Subtipo | null>(null);
+  const [paisConfig, setPaisConfig] = useState<PaisConfig>(PAIS_CONFIG_DEFAULT);
   const [aeros, setAeros] = useState<AeroCache[]>([]);
   const [estado, setEstado] = useState<EstadoJornada>(ESTADO_INICIAL);
   const [modal, setModal] = useState<Modal>(null);
@@ -46,9 +59,14 @@ export function CheckIn({ onFinalizado }: { onFinalizado: () => void }) {
 
   useEffect(() => {
     (async () => {
-      const [a, perfil] = await Promise.all([leerAsignacion(), leerPerfil()]);
+      const [a, perfil, cfg] = await Promise.all([
+        leerAsignacion(),
+        leerPerfil(),
+        leerPaisesConfig(),
+      ]);
       setAsignacion(a ?? null);
       setSubtipo(perfil?.subtipo ?? null);
+      setPaisConfig(paisConfigDe(a?.pais ?? perfil?.pais, cfg));
       if (a) {
         setAeros((await leerAeros(a.parque_id)) ?? []);
         const jornadaId = `${a.id}_${fechaHoy(a.tz)}`;
@@ -81,9 +99,19 @@ export function CheckIn({ onFinalizado }: { onFinalizado: () => void }) {
     }
   }
 
-  const on = (tipo: EventoTipo) => botonHabilitado(tipo, estado, subtipo);
+  async function cerrarSesion() {
+    try {
+      await createClient().auth.signOut();
+    } catch {
+      // Sin conexión igual limpiamos el cache local y volvemos al login.
+    }
+    await limpiarSesion();
+    onLogout();
+  }
+
+  const on = (tipo: EventoTipo) => botonHabilitado(tipo, estado, subtipo, paisConfig);
   const etq = (tipo: EventoTipo) => labelEvento(tipo, subtipo);
-  const botones = botonesDe(subtipo);
+  const botones = botonesDe(subtipo, paisConfig);
   const nombreParque = asignacion?.parque_nombre ?? "—";
 
   return (
@@ -94,8 +122,17 @@ export function CheckIn({ onFinalizado }: { onFinalizado: () => void }) {
           <p className="text-[11px] uppercase tracking-wide text-white/60">Parque</p>
           <p className="truncate text-sm font-bold">{nombreParque}</p>
         </div>
-        <div className="rounded-full bg-white/10 px-2 py-1">
-          <SyncIndicator />
+        <div className="flex items-center gap-2">
+          <div className="rounded-full bg-white/10 px-2 py-1">
+            <SyncIndicator />
+          </div>
+          <button
+            type="button"
+            onClick={() => setModal("logout")}
+            className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/90 transition hover:bg-white/20"
+          >
+            Salir
+          </button>
         </div>
       </header>
 
@@ -227,6 +264,15 @@ export function CheckIn({ onFinalizado }: { onFinalizado: () => void }) {
           onOk={() =>
             registrar({ tipo: EVENTO_TIPO.FINALIZAR_PARQUE }, etq(EVENTO_TIPO.FINALIZAR_PARQUE))
           }
+        />
+      )}
+      {modal === "logout" && (
+        <ModalConfirmar
+          titulo="Cerrar sesión"
+          detalle="Se cierra tu sesión en este dispositivo. Los eventos pendientes quedan guardados y se sincronizan al volver a ingresar. No finaliza el parque."
+          textoOk="Cerrar sesión"
+          onCerrar={() => setModal(null)}
+          onOk={cerrarSesion}
         />
       )}
     </main>

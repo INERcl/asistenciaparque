@@ -2,7 +2,14 @@
 // de los eventos ya registrados en la jornada del día. Persistente (IndexedDB) y
 // offline, para que sobreviva recargas y no dependa de la cola ya sincronizada.
 
-import { EVENTO_TIPO, type EventoTipo, SUBTIPO, type Subtipo } from "@/lib/catalogos";
+import {
+  EVENTO_TIPO,
+  type EventoTipo,
+  PAIS_CONFIG_DEFAULT,
+  type PaisConfig,
+  SUBTIPO,
+  type Subtipo,
+} from "@/lib/catalogos";
 import { cacheGet, cacheSet } from "./db";
 
 export interface EstadoJornada {
@@ -60,11 +67,13 @@ export function estadoDesdeEventos(tipos: EventoTipo[]): EstadoJornada {
   return e;
 }
 
-/** ¿Se puede apretar este botón dado el estado actual y el subtipo del técnico? */
+/** ¿Se puede apretar este botón dado el estado actual, el subtipo del técnico y
+ *  la config del país (limita el almuerzo a los países que lo usan)? */
 export function botonHabilitado(
   tipo: EventoTipo,
   e: EstadoJornada,
   subtipo: Subtipo | null,
+  paisConfig: PaisConfig = PAIS_CONFIG_DEFAULT,
 ): boolean {
   const externo = subtipo === SUBTIPO.INSPECTOR_EXTERNO;
   switch (tipo) {
@@ -81,8 +90,8 @@ export function botonHabilitado(
     case EVENTO_TIPO.SALIDA_WTG:
       return !e.diaCerrado && e.enTurbina; // solo si estás dentro
     case EVENTO_TIPO.INICIO_ALMUERZO:
-      return externo
-        ? false // el externo no registra almuerzo
+      return externo || !paisConfig.usa_almuerzo
+        ? false // el externo no registra almuerzo; ni los países que no lo usan
         : !e.diaCerrado && e.enParque && !e.almuerzoHecho && !e.enTurbina; // una vez
     case EVENTO_TIPO.INICIO_STANDBY:
       return !e.diaCerrado && e.enParque; // varios permitidos

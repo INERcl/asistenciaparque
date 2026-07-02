@@ -50,9 +50,14 @@ Detalle y justificación: **`STACK.md`**.
 - ✅ **Punta Lomitas** agregado (parque `ar_punta_lomitas`, **57 aeros** con numeración salteada).
 - ✅ **10 técnicos** creados (auth + fila `tecnicos`) vía `scripts/crear-tecnicos.mjs`.
 - ✅ Vistas externas `reporte_externo` / `reporte_externo_resumen` creadas.
-- ⏳ **Pendiente inmediato:** tras crear las vistas, PostgREST necesita refrescar su caché de
-  esquema: correr `NOTIFY pgrst, 'reload schema';` en el SQL Editor. Después, smoke-test del
-  formato externo (ver §7).
+- ✅ Migración `0002_asistencia_externa.sql`: `reporte_externo` con `evento_id` + rama "día de
+  standby"; vista **`resumen_asistencia`** (Consolidado, 1 fila por parque) + grant a `n8n_reader`.
+- ✅ Migración `0003_reporte_externo_fix.sql`: `reporte_externo` maneja `finalizar_parque` como
+  cierre y usa el ts de `traslado_maquina` para `esfuerzo_inicio`/`traslado_min`.
+- ✅ Migración `0004_paises_config.sql`: columnas de config por país en `paises`
+  (`permite_interno/externo`, `usa_almuerzo/equipos`); seed actualizado.
+- ⏳ **Pendiente inmediato:** tras aplicar `0002`/`0003`/`0004`, refrescar el esquema de PostgREST:
+  `NOTIFY pgrst, 'reload schema';` en el SQL Editor. Después, smoke-test del formato externo (ver §7).
 
 ### App (código, compila — `npm run build` verde)
 - ✅ Sistema de diseño **INER** (verde `#044245`, gris `#707070`, ámbar `#FFA700`, Montserrat,
@@ -67,13 +72,19 @@ Detalle y justificación: **`STACK.md`**.
   bloqueada (no se reabre/regenera).
 - ✅ **Vista por subtipo** (`lib/catalogos.ts` + `CheckIn.tsx`): interno vs externo con etiquetas
   y botones distintos (mismos eventos de fondo).
+- ✅ **Límites por país (data-driven)**: onboarding filtra parques por el país del técnico; el set de
+  botones se ajusta por país (almuerzo solo donde `usa_almuerzo`). Config leída de `paises` y
+  cacheada offline (`lib/catalogos.ts` `PAIS_CONFIG`/`paisConfigDe`, `lib/offline/sesion.ts`).
+- ✅ **Logout** (botón "Salir" en el header del check-in: `signOut` + limpia cache local, la outbox
+  sobrevive) + **revalidación** de la asignación cacheada contra el server al abrir (`app/page.tsx`).
+- ✅ **Iconos PWA propios** generados desde `logo-iner-mono` sobre verde INER (`public/icon-*`,
+  `apple-touch-icon`).
 
 ### Pendiente (no hecho)
-- ⏳ **n8n**: rol read-only + workflow (ver §6 y `PLAN_N8N.md`). **Es el próximo gran bloque.**
-- ⏳ Smoke-test del formato externo PLOM (bloqueado por el `NOTIFY pgrst` de arriba).
-- ⏳ Logout + revalidar la asignación cacheada contra el server al abrir (hoy, si se borra/finaliza
-  una asignación por fuera, hay que limpiar site data en el navegador).
-- ⏳ Iconos PWA propios (hoy se reusan los de `Checklist-Iner`).
+- ⏳ **n8n**: versionar el JSON del workflow en `n8n/` (export del cliente) y pegar los IDs reales de
+  libro AR. Rol read-only y branches externo/Consolidado especificados (ver `n8n/README.md` y
+  `PLAN_N8N.md`). Branch **interno** (`reporte_planilla`) todavía por armar.
+- ⏳ Smoke-test del formato externo PLOM (tras el `NOTIFY pgrst` de arriba).
 - ⏳ Vista SQL/n8n del externo: refinar la métrica `standby` del resumen con datos reales.
 - ⏳ Formato de planilla para CL/PE/UY (se asume similar a AR hasta tener sus archivos).
 

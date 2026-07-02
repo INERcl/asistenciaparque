@@ -5,13 +5,18 @@
 -- Idempotente (on conflict do update). PE/UY sin parques aún (intencional).
 -- =====================================================================
 
--- Países + zona horaria (TZ_POR_PAIS).
-insert into public.paises (id, nombre, tz) values
-  ('argentina', 'Argentina', 'America/Argentina/Buenos_Aires'),
-  ('chile',     'Chile',     'America/Santiago'),
-  ('peru',      'Perú',      'America/Lima'),
-  ('uruguay',   'Uruguay',   'America/Montevideo')
-on conflict (id) do update set nombre = excluded.nombre, tz = excluded.tz;
+-- Países + zona horaria (TZ_POR_PAIS) + config data-driven (ver 0004).
+-- Argentina: interno + externo, con almuerzo y equipos. Resto: solo externo.
+insert into public.paises
+  (id, nombre, tz, permite_interno, permite_externo, usa_almuerzo, usa_equipos) values
+  ('argentina', 'Argentina', 'America/Argentina/Buenos_Aires', true,  true, true,  true),
+  ('chile',     'Chile',     'America/Santiago',                false, true, false, false),
+  ('peru',      'Perú',      'America/Lima',                    false, true, false, false),
+  ('uruguay',   'Uruguay',   'America/Montevideo',              false, true, false, false)
+on conflict (id) do update set
+  nombre = excluded.nombre, tz = excluded.tz,
+  permite_interno = excluded.permite_interno, permite_externo = excluded.permite_externo,
+  usa_almuerzo = excluded.usa_almuerzo, usa_equipos = excluded.usa_equipos;
 
 -- Empresas (operadores) — solo Chile.
 insert into public.empresas (id, nombre, pais) values
@@ -58,13 +63,16 @@ on conflict (id) do update set
 -- Aeros: se generan 1..turbinas por parque (id '{parque}_{n}', nombre 'WTG NN').
 -- Reemplazar luego por el inventario real si los aeros tienen nombres propios.
 -- Punta Lomitas se excluye acá: su numeración es salteada (ver insert explícito abajo).
+-- Solo se generan para parques SIN aeros aún: así el seed no pelea con inventario
+-- ya cargado (evita chocar la unique (parque_id, numero) contra aeros de prueba
+-- creados con otro id). Para recargar un parque, borrá antes sus aeros.
 insert into public.aeros (id, parque_id, numero, nombre)
 select p.id || '_' || g, p.id, g, 'WTG ' || lpad(g::text, 2, '0')
 from public.parques p
 cross join lateral generate_series(1, coalesce(p.turbinas, 0)) as g
 where p.id <> 'ar_punta_lomitas'
-on conflict (id) do update set
-  parque_id = excluded.parque_id, numero = excluded.numero, nombre = excluded.nombre;
+  and not exists (select 1 from public.aeros a where a.parque_id = p.id)
+on conflict (id) do nothing;
 
 -- Punta Lomitas: 57 aeros reales, numeración NO contigua (faltan 5,7,10,48,49;
 -- llega hasta 62). Números extraídos del Excel PLOM (hoja "Parque 1", columna WTG).

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { leerAsignacion } from "@/lib/offline/sesion";
+import { ESTADO_ASIGNACION } from "@/lib/catalogos";
+import { guardarAsignacion, leerAsignacion } from "@/lib/offline/sesion";
 import { CheckIn } from "./_components/CheckIn";
 import { Hero } from "./_components/Hero";
 import { Login } from "./_components/Login";
@@ -26,6 +27,22 @@ export default function Page() {
         return;
       }
       const asignacion = await leerAsignacion();
+      // Revalida la asignación cacheada contra el server (evita quedar en un parque
+      // ya finalizado/borrado por fuera). Solo con conexión y solo si el server
+      // responde sin error: offline o ante fallo transitorio, se respeta el cache.
+      if (asignacion && navigator.onLine) {
+        const { data: activa, error } = await supabase
+          .from("asignaciones")
+          .select("id")
+          .eq("id", asignacion.id)
+          .eq("estado", ESTADO_ASIGNACION.ACTIVA)
+          .maybeSingle();
+        if (!error && !activa) {
+          await guardarAsignacion(null);
+          setEstado("onboarding");
+          return;
+        }
+      }
       setEstado(asignacion ? "checkin" : "onboarding");
     } catch {
       setEstado("login");
@@ -49,5 +66,10 @@ export default function Page() {
   if (estado === "login") return <Login onLogged={() => void evaluar()} />;
   if (estado === "onboarding")
     return <Onboarding onReady={() => setEstado("checkin")} />;
-  return <CheckIn onFinalizado={() => setEstado("onboarding")} />;
+  return (
+    <CheckIn
+      onFinalizado={() => setEstado("onboarding")}
+      onLogout={() => void evaluar()}
+    />
+  );
 }

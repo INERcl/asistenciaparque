@@ -140,6 +140,49 @@ export const TZ_POR_PAIS: Record<Pais, string> = {
   [PAIS.URUGUAY]: "America/Montevideo",
 };
 
+// Config por país (data-driven). Fuente de verdad: tabla `paises` (ver
+// supabase/migrations/0004_paises_config.sql). Este mapa es el fallback offline
+// y el default cuando no hay config cacheada. Limita qué ve el técnico:
+//   permite_interno/externo → flujos disponibles en el país,
+//   usa_almuerzo → botón Almuerzo, usa_equipos → agrupación por equipo (AR interna).
+export interface PaisConfig {
+  permite_interno: boolean;
+  permite_externo: boolean;
+  usa_almuerzo: boolean;
+  usa_equipos: boolean;
+}
+
+// Default conservador: solo externo, sin almuerzo ni equipos (Chile/Perú/Uruguay).
+export const PAIS_CONFIG_DEFAULT: PaisConfig = {
+  permite_interno: false,
+  permite_externo: true,
+  usa_almuerzo: false,
+  usa_equipos: false,
+};
+
+export const PAIS_CONFIG: Record<Pais, PaisConfig> = {
+  [PAIS.ARGENTINA]: {
+    permite_interno: true,
+    permite_externo: true,
+    usa_almuerzo: true,
+    usa_equipos: true,
+  },
+  [PAIS.CHILE]: PAIS_CONFIG_DEFAULT,
+  [PAIS.PERU]: PAIS_CONFIG_DEFAULT,
+  [PAIS.URUGUAY]: PAIS_CONFIG_DEFAULT,
+};
+
+/** Config del país: usa el override cacheado (desde `paises`), luego el mapa
+ *  embebido, luego el default. Nunca falla (offline-first). */
+export function paisConfigDe(
+  pais: Pais | null | undefined,
+  overrides?: Partial<Record<Pais, PaisConfig>> | null,
+): PaisConfig {
+  if (pais && overrides?.[pais]) return overrides[pais] as PaisConfig;
+  if (pais && PAIS_CONFIG[pais]) return PAIS_CONFIG[pais];
+  return PAIS_CONFIG_DEFAULT;
+}
+
 export const ESTADO_JORNADA = {
   ABIERTA: "abierta",
   CERRADA: "cerrada",
@@ -212,6 +255,15 @@ export const BOTONES_POR_SUBTIPO: Record<Subtipo, BotonesConfig> = {
   },
 };
 
-export function botonesDe(subtipo: Subtipo | null): BotonesConfig {
-  return BOTONES_POR_SUBTIPO[subtipo ?? SUBTIPO.INTERNO];
+export function botonesDe(
+  subtipo: Subtipo | null,
+  paisConfig: PaisConfig = PAIS_CONFIG_DEFAULT,
+): BotonesConfig {
+  const base = BOTONES_POR_SUBTIPO[subtipo ?? SUBTIPO.INTERNO];
+  // Almuerzo solo donde el país lo usa (hoy Argentina); en el resto no se muestra.
+  if (paisConfig.usa_almuerzo) return base;
+  return {
+    ...base,
+    directos: base.directos.filter((t) => t !== EVENTO_TIPO.INICIO_ALMUERZO),
+  };
 }

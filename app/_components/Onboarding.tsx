@@ -6,8 +6,10 @@ import { ESTADO_ASIGNACION, PAIS_LABEL, type Pais, TZ_POR_PAIS } from "@/lib/cat
 import {
   type AeroCache,
   type ParqueCache,
+  type PaisesConfig,
   guardarAeros,
   guardarAsignacion,
+  guardarPaisesConfig,
   guardarParques,
   leerParques,
   leerPerfil,
@@ -50,12 +52,32 @@ export function Onboarding({ onReady }: { onReady: () => void }) {
       setCargando(true);
       try {
         const supabase = createClient();
-        const { data, error } = await supabase
+        const perfil = await leerPerfil();
+
+        // Config por país (data-driven): la cachea para el check-in offline.
+        const { data: paisesData } = await supabase
+          .from("paises")
+          .select("id, permite_interno, permite_externo, usa_almuerzo, usa_equipos");
+        if (paisesData) {
+          const cfg: PaisesConfig = {};
+          for (const p of paisesData) {
+            cfg[p.id as keyof PaisesConfig] = {
+              permite_interno: p.permite_interno,
+              permite_externo: p.permite_externo,
+              usa_almuerzo: p.usa_almuerzo,
+              usa_equipos: p.usa_equipos,
+            };
+          }
+          await guardarPaisesConfig(cfg);
+        }
+
+        // Parques del país del técnico (si el perfil trae país; si no, todos).
+        let q = supabase
           .from("parques")
           .select("id, nombre, pais, empresa_id, turbinas")
-          .eq("activo", true)
-          .order("pais")
-          .order("orden");
+          .eq("activo", true);
+        if (perfil?.pais) q = q.eq("pais", perfil.pais);
+        const { data, error } = await q.order("pais").order("orden");
         if (error) throw error;
         const lista = (data ?? []) as ParqueCache[];
         if (!vivo) return;
@@ -64,7 +86,6 @@ export function Onboarding({ onReady }: { onReady: () => void }) {
 
         // Reconcilia: si ya hay una asignación activa en el server (p.ej. dispositivo
         // nuevo), la reusa y entra directo al check-in (evita doble activa, C4).
-        const perfil = await leerPerfil();
         if (perfil) {
           const { data: act } = await supabase
             .from("asignaciones")

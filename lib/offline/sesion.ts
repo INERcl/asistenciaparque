@@ -2,7 +2,7 @@
 // catálogo del parque (parques + aeros). Lo llenan login y onboarding cuando hay
 // conexión; el check-in lo lee para funcionar offline.
 
-import { type Pais, type Subtipo } from "@/lib/catalogos";
+import { type Pais, type PaisConfig, type Subtipo } from "@/lib/catalogos";
 import { cacheGet, cacheSet } from "./db";
 
 export interface PerfilCache {
@@ -46,6 +46,17 @@ export const guardarAsignacion = (a: AsignacionCache | null) =>
 export const leerAsignacion = () =>
   cacheGet<AsignacionCache | null>("sesion", "asignacion");
 
+/** Limpia la sesión local (logout): perfil, asignación y estado del día en cache.
+ *  No toca la outbox: los eventos pendientes sobreviven y sincronizan al re-loguear. */
+export async function limpiarSesion(): Promise<void> {
+  await Promise.all([
+    cacheSet("sesion", "perfil", null),
+    cacheSet("sesion", "asignacion", null),
+    cacheSet("sesion", "jornada_activa", null),
+    cacheSet("sesion", "jornada_eventos", null),
+  ]);
+}
+
 // ---------- Catálogo ----------
 export const guardarParques = (p: ParqueCache[]) => cacheSet("catalogo", "parques", p);
 export const leerParques = () => cacheGet<ParqueCache[]>("catalogo", "parques");
@@ -55,3 +66,10 @@ export const guardarAeros = (parqueId: string, aeros: AeroCache[]) =>
   cacheSet("catalogo", `aeros:${parqueId}`, aeros);
 export const leerAeros = (parqueId: string) =>
   cacheGet<AeroCache[]>("catalogo", `aeros:${parqueId}`);
+
+// ---------- Config por país (data-driven, ver tabla `paises`) ----------
+export type PaisesConfig = Partial<Record<Pais, PaisConfig>>;
+export const guardarPaisesConfig = (c: PaisesConfig) =>
+  cacheSet("catalogo", "paises_config", c);
+export const leerPaisesConfig = () =>
+  cacheGet<PaisesConfig>("catalogo", "paises_config");

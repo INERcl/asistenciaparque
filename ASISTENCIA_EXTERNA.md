@@ -20,7 +20,11 @@ las tablas base. La conexión Postgres de n8n usa el usuario `n8n_reader` (ver
 ## Branch 1 — Hoja del parque ↔ `reporte_externo`
 
 Con 0002, `reporte_externo` trae `evento_id` (clave de match estable) y una fila por día de
-standby completo (`wtg`/horas en `null`, `observacion` = motivo del standby).
+standby completo (`wtg`/horas en `null`, `observacion` = motivo del standby). Con **0003**
+(`supabase/migrations/0003_reporte_externo_fix.sql`): `esfuerzo_inicio`/`traslado_min` salen del
+ts del evento `traslado_maquina` (traslado real a cada aero), y `finalizar_parque` cierra el día
+igual que `salida_parque` (antes, cerrar con "Finalizar parque" dejaba el último aero sin
+`esfuerzo_final`/`salida_de_parque`/`tiempo_min`).
 
 Mapeo columna del Sheet → campo de la vista → formato en el nodo Code:
 
@@ -49,7 +53,8 @@ Nodos:
 
 2. **Code "Formatear asistencia"** — mapea a las columnas de arriba. Dos correcciones respecto
    del formateo previo:
-   - `Traslado` = **duración** de `traslado_min` (minutos → `H:MM`), no una hora.
+   - `Traslado` = **duración** de `traslado_min` (minutos → `H:MM`), no una hora. Desde 0003 es
+     `parada_aero − ts(traslado_maquina)` = tiempo real de traslado a ese aero.
    - `Tiempo` = **duración** de `tiempo_min` (ya viene como `salida_de_parque − última salida
      del día` desde la vista).
    Emitir solo las columnas del Sheet + `visita_id = evento_id`.

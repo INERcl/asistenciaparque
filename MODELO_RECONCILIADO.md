@@ -2,8 +2,16 @@
 
 Referencia única del modelo de datos. Reconcilia `PLAN.md` (event-log oficial,
 offline-first) con el prototipo del usuario `flujo no oficial.jpg`. El esquema vive en
-`supabase/migrations/0001_init.sql`; el seed en `supabase/seed.sql`. El downstream (n8n →
-Google Sheets) está en `PLAN_N8N.md`.
+`supabase/migrations/0001_init.sql` + migraciones incrementales; el seed en `supabase/seed.sql`.
+El downstream (n8n → Google Sheets) está en `PLAN_N8N.md` y `ASISTENCIA_EXTERNA.md`.
+
+Migraciones incrementales sobre 0001:
+- **0002** — `reporte_externo` con `evento_id` + rama "día de standby"; vista **`resumen_asistencia`**
+  (Consolidado externo, 1 fila por parque) para el branch de n8n.
+- **0003** — `reporte_externo`: `finalizar_parque` cierra el día igual que `salida_parque`;
+  `esfuerzo_inicio`/`traslado_min` desde el ts de `traslado_maquina`.
+- **0004** — config por país en `paises` (`permite_interno/externo`, `usa_almuerzo/equipos`); la app
+  filtra parques por país del técnico y ajusta el set de botones (data-driven).
 
 ## Principios
 
@@ -22,7 +30,7 @@ Google Sheets) está en `PLAN_N8N.md`.
 
 | Tabla | Rol | Notas |
 |---|---|---|
-| `paises` | catálogo + **TZ** | `tz` IANA centraliza TZ_POR_PAIS (fecha de jornada y corte 20:00) |
+| `paises` | catálogo + **TZ** + config | `tz` IANA centraliza TZ_POR_PAIS; `permite_interno/externo` y `usa_almuerzo/equipos` (0004) limitan la vista del técnico (data-driven) |
 | `empresas` | operadores | solo Chile agrupa por empresa |
 | `parques` | catálogo | `turbinas` = conteo; `empresa_id` nullable (AR sin empresa) |
 | `aeros` | **catálogo de aerogeneradores** | uno por turbina; el técnico elige el número |
@@ -85,12 +93,15 @@ Google Sheets) está en `PLAN_N8N.md`.
 
 La diferencia **interno/externo** vive en las **vistas**, no en tablas:
 - **Interno →** `reporte_planilla` / `reporte_resumen` (formato planilla clásico).
-- **Externo →** `reporte_externo` / `reporte_externo_resumen` (**formato PLOM**, estándar para
-  todos los externos). `reporte_externo`: una fila por aero visitado con la **cadena** de tiempos
-  (`esfuerzo_inicio` = salida anterior o llegada · `parada_aero` = entrada_wtg · `traslado_min` =
-  parada − esfuerzo_inicio · `esfuerzo_final`/`inicio_aero` = salida_wtg · `salida_de_parque` ·
-  `tiempo_min` · `observacion`). Todo derivado de `entrada_parque`/`entrada_wtg`/`salida_wtg`/
-  `salida_parque` (el botón "Traslado" del externo es de UX; el reporte encadena salida→esfuerzo).
+- **Externo →** `reporte_externo` / `reporte_externo_resumen` + **`resumen_asistencia`**
+  (Consolidado, 1 fila por parque; ver 0002) — **formato PLOM**, estándar para todos los externos.
+  `reporte_externo`: una fila por aero visitado con la **cadena** de tiempos
+  (`esfuerzo_inicio` = ts del `traslado_maquina` a ese aero · `parada_aero` = entrada_wtg ·
+  `traslado_min` = parada − esfuerzo_inicio · `esfuerzo_final`/`inicio_aero` = salida_wtg ·
+  `salida_de_parque` · `tiempo_min` · `observacion`), más una fila por día de standby completo.
+  Derivado de `entrada_parque`/`traslado_maquina`/`entrada_wtg`/`salida_wtg`/`salida_parque`/
+  `finalizar_parque` (0003: el botón "Traslado" del externo ahora alimenta `esfuerzo_inicio`, y
+  `finalizar_parque` cierra el día igual que `salida_parque`).
 
 ## Ruteo a la planilla (pestañas)
 
