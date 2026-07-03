@@ -21,7 +21,13 @@ import {
 } from "@/lib/offline/sesion";
 import { Hero } from "./Hero";
 
-export function Onboarding({ onReady }: { onReady: () => void }) {
+export function Onboarding({
+  onReady,
+  onSalir,
+}: {
+  onReady: () => void;
+  onSalir: () => void;
+}) {
   const [parques, setParques] = useState<ParqueCache[]>([]);
   const [cargando, setCargando] = useState(true);
   const [creando, setCreando] = useState<string | null>(null);
@@ -224,6 +230,14 @@ export function Onboarding({ onReady }: { onReady: () => void }) {
               ))}
             </div>
           )}
+
+          <button
+            type="button"
+            onClick={onSalir}
+            className="mt-4 w-full text-center text-xs text-iner-gray underline"
+          >
+            Cerrar sesión y volver al inicio
+          </button>
         </div>
       </div>
     </main>

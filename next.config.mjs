@@ -7,6 +7,9 @@ const withSerwist = withSerwistInit({
   swDest: "public/sw.js",
   // En desarrollo el SW se deshabilita para no cachear entre recargas.
   disable: process.env.NODE_ENV === "development",
+  // Precachea el documento "/" en el install del SW: la app arranca offline
+  // aunque el HTML nunca haya quedado en el runtime cache (ver fallback en sw.ts).
+  additionalPrecacheEntries: [{ url: "/", revision: `${Date.now()}` }],
 });
 
 /** @type {import('next').NextConfig} */

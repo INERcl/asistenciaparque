@@ -17,6 +17,18 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: defaultCache,
+  // Sin red y sin runtime cache, cualquier navegación cae al "/" precacheado
+  // (app de una sola página): la PWA abre offline en vez del error del browser.
+  fallbacks: {
+    entries: [
+      {
+        url: "/",
+        matcher({ request }) {
+          return request.destination === "document";
+        },
+      },
+    ],
+  },
 });
 
 serwist.addEventListeners();
