@@ -1,8 +1,9 @@
 -- =====================================================================
 -- INER Check-in — Seed
--- Países (+TZ) · empresas (6, Chile) · parques (23: 7 CL + 16 AR) ·
+-- Países (+TZ) · empresas (6, Chile) · parques (24: 8 CL + 16 AR) ·
 -- aeros generados desde parques.turbinas. Equipos AR interna (X-C, F-K).
 -- Idempotente (on conflict do update). PE/UY sin parques aún (intencional).
+-- Chile: lista reingresada en orden (ver 0006); empresa_id sin asignar (null).
 -- =====================================================================
 
 -- Países + zona horaria (TZ_POR_PAIS) + config data-driven (ver 0004).
@@ -28,16 +29,17 @@ insert into public.empresas (id, nombre, pais) values
   ('siemens_gamesa_chile', 'Siemens Gamesa Chile',   'chile')
 on conflict (id) do update set nombre = excluded.nombre, pais = excluded.pais;
 
--- Parques. Chile (7) con empresa_id; Argentina (15) sin empresa.
+-- Parques. Chile (8) en orden, empresa_id sin asignar (null); Argentina (16) sin empresa.
 insert into public.parques (id, nombre, pais, empresa_id, turbinas, activo, orden) values
   -- Chile
-  ('cl_los_buenos_aires', 'PE Los Buenos Aires',       'chile', 'enel_green_power',     12, true, 1),
-  ('cl_monte_redondo',    'PE Monte Redondo',          'chile', 'engie_chile',          24, true, 2),
-  ('cl_atacama',          'PE Atacama',                'chile', 'ibereolica_chile',     29, true, 3),
-  ('cl_cuel',             'CUEL',                      'chile', 'innergex_chile',       22, true, 4),
-  ('cl_sarco',            'SARCO',                     'chile', 'innergex_chile',       50, true, 5),
-  ('cl_puelche_sur',      'Parque Eólico Puelche Sur', 'chile', 'nordex_chile',         32, true, 6),
-  ('cl_el_arrayan',       'PE EL Arrayan',             'chile', 'siemens_gamesa_chile', 51, true, 7),
+  ('cl_el_arrayan',        'El Arrayan',          'chile', null, 50, true, 1),
+  ('cl_cabo_leones_1_ext', 'Cabo Leones I Ext',   'chile', null, 12, true, 2),
+  ('cl_cabo_leones_3_ext', 'Cabo Leones III Ext', 'chile', null, 22, true, 3),
+  ('cl_cabo_leones_2',     'Cabo Leones II',      'chile', null, 49, true, 4),
+  ('cl_tchamma',           'Tchamma',             'chile', null, 35, true, 5),
+  ('cl_la_estrella',       'La Estrella',         'chile', null, 11, true, 6),
+  ('cl_calama',            'Calama',              'chile', null, 22, true, 7),
+  ('cl_llanos_del_viento', 'Llanos Del Viento',   'chile', null, 32, true, 8),
   -- Argentina
   ('ar_buenaventura',     'PE Buenaventura',           'argentina', null, 48, true, 1),
   ('ar_de_la_bahia',      'PE DE LA BAHIA',            'argentina', null, 18, true, 2),
