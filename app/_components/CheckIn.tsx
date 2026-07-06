@@ -44,6 +44,7 @@ import {
   leerAsignacion,
   leerPaisesConfig,
   leerPerfil,
+  limpiarAsignacionLocal,
   limpiarSesion,
 } from "@/lib/offline/sesion";
 import { sync } from "@/lib/offline/sync";
@@ -99,6 +100,7 @@ type Modal =
   | "standby"
   | "salida"
   | "finalizar"
+  | "cancelar"
   | "logout";
 
 // Evidencia registrada lista para compartir por WhatsApp.
@@ -253,6 +255,43 @@ export function CheckIn({
     onLogout();
   }
 
+  /** Cambiar de parque: borra la asignación elegida por error (sin cerrar sesión)
+   *  y vuelve a la selección. Solo si aún no tiene jornadas registradas. */
+  async function cancelarParque() {
+    if (busy || !asignacion) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (!navigator.onLine) {
+        throw new Error("Necesitás conexión para cambiar de parque.");
+      }
+      const supabase = createClient();
+      const { count, error: errCount } = await supabase
+        .from("jornadas")
+        .select("id", { count: "exact", head: true })
+        .eq("asignacion_id", asignacion.id);
+      if (errCount) throw errCount;
+      if ((count ?? 0) > 0) {
+        throw new Error(
+          'Este parque ya tiene actividad registrada. Usá "Finalizar parque" para cerrarlo.',
+        );
+      }
+      const { error: errDel } = await supabase
+        .from("asignaciones")
+        .delete()
+        .eq("id", asignacion.id);
+      if (errDel) throw errDel;
+      await limpiarAsignacionLocal(asignacion.id);
+      setModal(null);
+      onFinalizado(); // vuelve a la selección de parque, sin cerrar sesión
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo cambiar de parque.");
+      setModal(null);
+    } finally {
+      window.setTimeout(() => setBusy(false), 500);
+    }
+  }
+
   const on = (tipo: EventoTipo) => botonHabilitado(tipo, estado, subtipo, paisConfig);
   const etq = (tipo: EventoTipo) => labelEvento(tipo, subtipo);
   const botones = botonesDe(subtipo, paisConfig);
@@ -324,6 +363,16 @@ export function CheckIn({
           <p className="-mt-2 text-center text-xs text-iner-gray">
             Registrá <strong>{etq(EVENTO_TIPO.SALIDA_WTG)}</strong> para cerrar el aero.
           </p>
+        )}
+        {!estado.enParque && !estado.diaCerrado && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setModal("cancelar")}
+            className="-mt-1 w-full text-center text-xs text-iner-gray underline disabled:opacity-40"
+          >
+            ¿Parque equivocado? Cambiar de parque
+          </button>
         )}
 
         {/* Acciones directas */}
@@ -446,6 +495,15 @@ export function CheckIn({
           textoOk="Finalizar parque"
           onCerrar={() => setModal(null)}
           onOk={() => void cerrar(EVENTO_TIPO.FINALIZAR_PARQUE)}
+        />
+      )}
+      {modal === "cancelar" && (
+        <ModalConfirmar
+          titulo="Cambiar de parque"
+          detalle="Cancela este parque y volvés a la selección para elegir el correcto. No cierra tu sesión. Disponible solo si todavía no registraste actividad."
+          textoOk="Cambiar de parque"
+          onCerrar={() => setModal(null)}
+          onOk={() => void cancelarParque()}
         />
       )}
       {modal === "logout" && (

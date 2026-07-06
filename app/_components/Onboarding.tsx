@@ -32,6 +32,7 @@ export function Onboarding({
   const [cargando, setCargando] = useState(true);
   const [creando, setCreando] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [nombreTecnico, setNombreTecnico] = useState<string | null>(null);
 
   const hidratarAsignacion = useCallback(
     async (a: { id: string; parque_id: string; inicio_ts: string }, lista: ParqueCache[]) => {
@@ -79,6 +80,7 @@ export function Onboarding({
       try {
         const supabase = createClient();
         const perfil = await leerPerfil();
+        if (vivo) setNombreTecnico(perfil?.nombre ?? null);
 
         // Config por país (data-driven): la cachea para el check-in offline.
         const { data: paisesData } = await supabase
@@ -188,6 +190,11 @@ export function Onboarding({
       <div className="w-full max-w-md">
         <Hero subtitulo="Elegí el parque a inspeccionar" />
         <div className="rounded-b-2xl border border-t-0 border-black/10 bg-white p-4 shadow-sm">
+          {nombreTecnico && (
+            <p className="mb-3 rounded-lg bg-iner-green-50 px-3 py-2 text-sm text-iner-green">
+              Sesión iniciada como: <strong>{nombreTecnico}</strong>
+            </p>
+          )}
           {error && (
             <p className="mb-3 rounded-lg border border-iner-amber bg-iner-amber-50 px-3 py-2 text-sm text-[#9a6200]">
               {error}

@@ -4,6 +4,7 @@
 
 import { type Pais, type PaisConfig, type Subtipo } from "@/lib/catalogos";
 import { cacheGet, cacheSet } from "./db";
+import { limpiarInspeccionados } from "./inspeccionados";
 
 export interface PerfilCache {
   id: string; // = auth.uid()
@@ -55,6 +56,18 @@ export async function limpiarSesion(): Promise<void> {
     cacheSet("sesion", "asignacion", null),
     cacheSet("sesion", "jornada_activa", null),
     cacheSet("sesion", "jornada_eventos", null),
+  ]);
+}
+
+/** Limpia solo la asignación activa y su estado del día (cambiar/cancelar parque),
+ *  conservando el perfil y la sesión de auth. */
+export async function limpiarAsignacionLocal(asignacionId: string): Promise<void> {
+  await Promise.all([
+    cacheSet("sesion", "asignacion", null),
+    cacheSet("sesion", "jornada_activa", null),
+    cacheSet("sesion", "jornada_eventos", null),
+    cacheSet("sesion", "aero_actual", null),
+    limpiarInspeccionados(asignacionId),
   ]);
 }
 
