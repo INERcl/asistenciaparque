@@ -25,6 +25,15 @@ interface JornadaFila {
   fecha: string; // YYYY-MM-DD
   parque_id: string;
   subtipo: Subtipo | null;
+  operador: string; // técnico que registró la jornada (puede ser un compañero de equipo)
+}
+
+interface JornadaRow {
+  id: string;
+  fecha: string;
+  parque_id: string;
+  subtipo: Subtipo | null;
+  tecnicos: { nombre: string | null } | { nombre: string | null }[] | null;
 }
 
 interface EventoRow {
@@ -47,7 +56,6 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
   const [jornadas, setJornadas] = useState<JornadaFila[]>([]);
   const [nombreParque, setNombreParque] = useState<Record<string, string>>({});
   const [tzParque, setTzParque] = useState<Record<string, string>>({});
-  const [operador, setOperador] = useState("—");
   const [equipo, setEquipo] = useState("—");
   const [expandida, setExpandida] = useState<string | null>(null);
 
@@ -62,23 +70,33 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
         setEstado("error");
         return;
       }
-      setOperador(perfil.nombre ?? "—");
       setEquipo((await leerEquipoMiembros()) ?? perfil.nombre ?? "—");
       const parques = (await leerParques()) ?? [];
       setNombreParque(Object.fromEntries(parques.map((p) => [p.id, p.nombre])));
       setTzParque(Object.fromEntries(parques.map((p) => [p.id, TZ_POR_PAIS[p.pais]])));
       try {
         const supabase = createClient();
+        // Sin filtro por tecnico_id: la RLS trae las jornadas propias y las del
+        // mismo equipo (ver 0012). `tecnicos(nombre)` = operador que la registró.
         const { data, error } = await supabase
           .from("jornadas")
-          .select("id, fecha, parque_id, subtipo")
-          .eq("tecnico_id", perfil.id)
+          .select("id, fecha, parque_id, subtipo, tecnicos(nombre)")
           .order("fecha", { ascending: false });
         if (error) {
           setEstado("error");
           return;
         }
-        setJornadas((data ?? []) as unknown as JornadaFila[]);
+        const filas: JornadaFila[] = ((data ?? []) as unknown as JornadaRow[]).map((j) => {
+          const t = Array.isArray(j.tecnicos) ? j.tecnicos[0] : j.tecnicos;
+          return {
+            id: j.id,
+            fecha: j.fecha,
+            parque_id: j.parque_id,
+            subtipo: j.subtipo,
+            operador: t?.nombre ?? "—",
+          };
+        });
+        setJornadas(filas);
         setEstado("ok");
       } catch {
         setEstado("error");
@@ -121,7 +139,6 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
               jornada={j}
               parque={nombreParque[j.parque_id] ?? j.parque_id}
               tz={tzParque[j.parque_id] ?? TZ_DEFAULT}
-              operador={operador}
               equipo={equipo}
               abierta={expandida === j.id}
               onToggle={() => setExpandida((cur) => (cur === j.id ? null : j.id))}
@@ -136,7 +153,6 @@ function JornadaCard({
   jornada,
   parque,
   tz,
-  operador,
   equipo,
   abierta,
   onToggle,
@@ -144,7 +160,6 @@ function JornadaCard({
   jornada: JornadaFila;
   parque: string;
   tz: string;
-  operador: string;
   equipo: string;
   abierta: boolean;
   onToggle: () => void;
@@ -186,7 +201,7 @@ function JornadaCard({
         });
         if (jornada.subtipo === SUBTIPO.INSPECTOR_EXTERNO) {
           const datos = resumenJornadaDesdeEventos(eventos, {
-            operador,
+            operador: jornada.operador,
             parque,
             fecha: fechaLarga(jornada.fecha),
           });
@@ -212,7 +227,7 @@ function JornadaCard({
     jornada.id,
     jornada.fecha,
     jornada.subtipo,
-    operador,
+    jornada.operador,
     parque,
     equipo,
     tz,
@@ -229,7 +244,9 @@ function JornadaCard({
           <span className="block text-sm font-bold text-foreground">
             {fechaLarga(jornada.fecha)}
           </span>
-          <span className="block truncate text-xs text-iner-gray">{parque}</span>
+          <span className="block truncate text-xs text-iner-gray">
+            {parque} · {jornada.operador}
+          </span>
         </span>
         <span className="text-iner-gray">{abierta ? "▲" : "▼"}</span>
       </button>
