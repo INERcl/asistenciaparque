@@ -91,12 +91,15 @@ export const MOTIVOS_REQUIEREN_TEXTO: StandbyMotivo[] = [STANDBY_MOTIVO.OTROS];
 // Sub-motivos de Clima. "Clima" abre esta segunda lista; el elegido se guarda
 // como etiqueta en eventos.motivo_otro (motivo queda 'clima'). Ver ModalStandby.
 export const CLIMA_MOTIVO = {
-  VIENTO: "viento",
-  LLUVIA: "lluvia",
+  VIENTO: "viento", // Chile: "Velocidad del viento"
+  LLUVIA: "lluvia", // Chile
   NIEBLA: "niebla",
   NIEVE: "nieve",
   GRANIZO: "granizo",
-  POCA_LUZ: "poca_luz",
+  POCA_LUZ: "poca_luz", // Chile
+  TORMENTA: "tormenta", // Argentina (reemplaza lluvia/llovizna)
+  VIENTO_ALTO: "viento_alto", // Argentina (Velocidad del viento → alto/bajo)
+  VIENTO_BAJO: "viento_bajo", // Argentina
 } as const;
 export type ClimaMotivo = (typeof CLIMA_MOTIVO)[keyof typeof CLIMA_MOTIVO];
 export const CLIMA_MOTIVOS = Object.values(CLIMA_MOTIVO);
@@ -108,6 +111,9 @@ export const CLIMA_MOTIVO_LABEL: Record<ClimaMotivo, string> = {
   [CLIMA_MOTIVO.NIEVE]: "Nieve",
   [CLIMA_MOTIVO.GRANIZO]: "Granizo",
   [CLIMA_MOTIVO.POCA_LUZ]: "Poca luz",
+  [CLIMA_MOTIVO.TORMENTA]: "Tormenta",
+  [CLIMA_MOTIVO.VIENTO_ALTO]: "Viento alto",
+  [CLIMA_MOTIVO.VIENTO_BAJO]: "Viento bajo",
 };
 
 // Motivos que abren una segunda lista de sub-motivos en vez de texto libre.
@@ -155,6 +161,29 @@ export const PAIS_LABEL: Record<Pais, string> = {
   [PAIS.PERU]: "Perú",
   [PAIS.URUGUAY]: "Uruguay",
 };
+
+// Sub-lista de Clima por país (los motivos de Argentina difieren de Chile).
+const CLIMA_MOTIVOS_AR: ClimaMotivo[] = [
+  CLIMA_MOTIVO.TORMENTA,
+  CLIMA_MOTIVO.VIENTO_ALTO,
+  CLIMA_MOTIVO.VIENTO_BAJO,
+  CLIMA_MOTIVO.NIEBLA,
+  CLIMA_MOTIVO.NIEVE,
+  CLIMA_MOTIVO.GRANIZO,
+];
+const CLIMA_MOTIVOS_DEFAULT: ClimaMotivo[] = [
+  CLIMA_MOTIVO.VIENTO,
+  CLIMA_MOTIVO.LLUVIA,
+  CLIMA_MOTIVO.NIEBLA,
+  CLIMA_MOTIVO.NIEVE,
+  CLIMA_MOTIVO.GRANIZO,
+  CLIMA_MOTIVO.POCA_LUZ,
+];
+
+/** Motivos de clima disponibles según el país del parque (Argentina vs resto). */
+export function climaMotivosDe(pais: Pais | null | undefined): ClimaMotivo[] {
+  return pais === PAIS.ARGENTINA ? CLIMA_MOTIVOS_AR : CLIMA_MOTIVOS_DEFAULT;
+}
 
 export const PAISES = [
   { id: PAIS.ARGENTINA, label: "Argentina" },
@@ -251,12 +280,20 @@ const EVENTO_LABEL_EXTERNO: Partial<Record<EventoTipo, string>> = {
   [EVENTO_TIPO.SALIDA_WTG]: "RUN · Inicio de aero",
 };
 
+// Etiquetas de la interna (override). Terminología de campo: llega a la
+// subestación, sube/baja de la máquina (con un traslado antes de cada turbina).
+const EVENTO_LABEL_INTERNO: Partial<Record<EventoTipo, string>> = {
+  [EVENTO_TIPO.ENTRADA_PARQUE]: "Llegada a subestación",
+  [EVENTO_TIPO.ENTRADA_WTG]: "Subida a máquina",
+  [EVENTO_TIPO.SALIDA_WTG]: "Salida de máquina",
+};
+
 /** Etiqueta del botón según el subtipo del técnico. */
 export function labelEvento(tipo: EventoTipo, subtipo: Subtipo | null): string {
   if (subtipo === SUBTIPO.INSPECTOR_EXTERNO) {
     return EVENTO_LABEL_EXTERNO[tipo] ?? EVENTO_TIPO_LABEL[tipo];
   }
-  return EVENTO_TIPO_LABEL[tipo];
+  return EVENTO_LABEL_INTERNO[tipo] ?? EVENTO_TIPO_LABEL[tipo];
 }
 
 // Set de botones por subtipo (destacado = botón grande; directos = grilla).
@@ -267,12 +304,12 @@ export interface BotonesConfig {
 
 export const BOTONES_POR_SUBTIPO: Record<Subtipo, BotonesConfig> = {
   [SUBTIPO.INTERNO]: {
+    // Ciclo por turbina: Traslado → Subida (destacado) → Salida. Sin almuerzo.
     destacado: EVENTO_TIPO.ENTRADA_WTG,
     directos: [
       EVENTO_TIPO.ENTRADA_PARQUE,
       EVENTO_TIPO.TRASLADO_MAQUINA,
       EVENTO_TIPO.SALIDA_WTG,
-      EVENTO_TIPO.INICIO_ALMUERZO,
     ],
   },
   [SUBTIPO.INSPECTOR_EXTERNO]: {

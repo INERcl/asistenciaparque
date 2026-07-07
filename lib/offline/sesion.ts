@@ -42,6 +42,14 @@ export interface ParqueCache {
 export const guardarPerfil = (p: PerfilCache) => cacheSet("sesion", "perfil", p);
 export const leerPerfil = () => cacheGet<PerfilCache>("sesion", "perfil");
 
+// ---------- Equipo (integrantes) ----------
+// String ya armado "Nombre1 - Nombre2" para la línea "Equipo" del resumen interno.
+// Se llena al loguear (online) y sobrevive offline. Solo AR interna tiene equipo.
+export const guardarEquipoMiembros = (s: string | null) =>
+  cacheSet("sesion", "equipo_miembros", s);
+export const leerEquipoMiembros = () =>
+  cacheGet<string | null>("sesion", "equipo_miembros");
+
 // ---------- Asignación activa ----------
 export const guardarAsignacion = (a: AsignacionCache | null) =>
   cacheSet("sesion", "asignacion", a);
@@ -57,6 +65,7 @@ export async function limpiarSesion(): Promise<void> {
     cacheSet("sesion", "jornada_activa", null),
     cacheSet("sesion", "jornada_eventos", null),
     cacheSet("sesion", "jornada_detalle", null),
+    cacheSet("sesion", "equipo_miembros", null),
   ]);
 }
 

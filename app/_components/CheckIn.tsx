@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  CLIMA_MOTIVOS,
   CLIMA_MOTIVO,
   CLIMA_MOTIVO_LABEL,
   type ClimaMotivo,
@@ -19,15 +18,20 @@ import {
   type StandbyMotivo,
   type Subtipo,
   botonesDe,
+  climaMotivosDe,
   labelEvento,
   paisConfigDe,
 } from "@/lib/catalogos";
 import {
-  type ResumenJornada,
+  encabezadoDia,
+  resumenInternoDesdeEventos,
   resumenJornadaDesdeEventos,
   textoEvidencia,
+  textoResumenInterno,
+  textoResumenJornada,
 } from "@/lib/compartir";
 import { fechaHoy } from "@/lib/tiempo";
+import { refrescarEquipoMiembros } from "@/lib/equipo";
 import { createClient } from "@/lib/supabase/client";
 import { registrarEvento } from "@/lib/offline/registrarEvento";
 import {
@@ -37,13 +41,14 @@ import {
   estadoDesdeEventos,
   getTiposJornada,
 } from "@/lib/offline/estado";
-import { leerAeroActual } from "@/lib/offline/inspeccionados";
+import { leerAeroActual, leerInspeccionados } from "@/lib/offline/inspeccionados";
 import { leerEventosDetalle } from "@/lib/offline/detalleJornada";
 import {
   type AeroCache,
   type AsignacionCache,
   leerAeros,
   leerAsignacion,
+  leerEquipoMiembros,
   leerPaisesConfig,
   leerPerfil,
   limpiarAsignacionLocal,
@@ -91,6 +96,9 @@ const CLIMA_MOTIVO_ICON: Record<ClimaMotivo, Icono> = {
   [CLIMA_MOTIVO.NIEVE]: IconNieve,
   [CLIMA_MOTIVO.GRANIZO]: IconGranizo,
   [CLIMA_MOTIVO.POCA_LUZ]: IconPocaLuz,
+  [CLIMA_MOTIVO.TORMENTA]: IconLluvia, // Argentina
+  [CLIMA_MOTIVO.VIENTO_ALTO]: IconViento, // Argentina
+  [CLIMA_MOTIVO.VIENTO_BAJO]: IconViento, // Argentina
 };
 
 // Acciones que abren un modal antes de registrar.
@@ -135,8 +143,10 @@ export function CheckIn({
   const [aeroElegido, setAeroElegido] = useState<AeroCache | null>(null); // STOP pendiente de foto
   const [aeroActual, setAeroActual] = useState<AeroCache | null>(null); // STOP registrado sin RUN
   const [compartir, setCompartir] = useState<Compartible | null>(null);
-  const [resumen, setResumen] = useState<ResumenJornada | null>(null);
+  const [resumen, setResumen] = useState<string | null>(null); // texto ya armado
   const [resumenEsFinal, setResumenEsFinal] = useState(false);
+  // Ids de aero ya inspeccionados (acumulado de la asignación) → tinte verde en el selector.
+  const [inspeccionados, setInspeccionados] = useState<Set<string>>(new Set());
 
   const externo = subtipo === SUBTIPO.INSPECTOR_EXTERNO;
 
@@ -151,11 +161,15 @@ export function CheckIn({
       setSubtipo(perfil?.subtipo ?? null);
       setNombreTecnico(perfil?.nombre ?? null);
       setPaisConfig(paisConfigDe(a?.pais ?? perfil?.pais, cfg));
+      // Refresca los nombres del equipo (resumen interno) con red, sin depender
+      // del re-login. Requiere la RLS 0011 para ver a los compañeros.
+      if (perfil && navigator.onLine) void refrescarEquipoMiembros(perfil);
       if (a) {
         const lista = (await leerAeros(a.parque_id)) ?? [];
         setAeros(lista);
         const jornadaId = `${a.id}_${fechaHoy(a.tz)}`;
         setEstado(estadoDesdeEventos(await getTiposJornada(jornadaId)));
+        setInspeccionados(new Set(await leerInspeccionados(a.id)));
         // Reconstruye el aero con STOP abierto (sobrevive recargas).
         const abierto = await leerAeroActual(jornadaId);
         setAeroActual(lista.find((x) => x.id === abierto) ?? null);
@@ -173,15 +187,20 @@ export function CheckIn({
     try {
       const res = await registrarEvento(input);
       setEstado(res.estado);
+      // Refresca el acumulado de inspeccionados (una salida acaba de completar un aero).
+      if (asignacion) {
+        void leerInspeccionados(asignacion.id).then((ids) =>
+          setInspeccionados(new Set(ids)),
+        );
+      }
       setUltimo(`${feedback} · ${new Date().toLocaleTimeString("es-CL", {
         hour: "2-digit",
         minute: "2-digit",
       })}`);
       setModal(null);
       void sync();
-      // El externo ve primero el resumen del día; onFinalizado() se difiere al
-      // cierre de ese modal (ver ModalResumenDia).
-      if (input.tipo === EVENTO_TIPO.FINALIZAR_PARQUE && !externo) onFinalizado();
+      // Interno y externo ven primero el resumen del día; onFinalizado() se
+      // difiere al cierre de ese modal (ver ModalResumenDia y cerrar()).
       return res;
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo registrar el evento.");
@@ -191,32 +210,47 @@ export function CheckIn({
     }
   }
 
-  /** Cierre del día/parque: para el externo arma y muestra el resumen detallado.
-   *  Los eventos del día se leen ANTES de registrar el cierre (finalizar_parque
-   *  limpia el detalle local y la asignación); la hora de salida sale de res.ts. */
+  /** Cierre del día/parque: arma y muestra el resumen copiable (externo STOP/RUN
+   *  o interno Traslado/Subida/Salida). Los eventos del día se leen ANTES de
+   *  registrar el cierre (finalizar_parque limpia el detalle local y la
+   *  asignación); la hora de salida sale de res.ts. */
   async function cerrar(tipo: EventoTipo) {
-    const eventos =
-      externo && asignacion
-        ? await leerEventosDetalle(`${asignacion.id}_${fechaHoy(asignacion.tz)}`)
-        : [];
+    const eventos = asignacion
+      ? await leerEventosDetalle(`${asignacion.id}_${fechaHoy(asignacion.tz)}`)
+      : [];
     const res = await registrar({ tipo }, etq(tipo));
-    if (res && externo && asignacion) {
-      const f = fechaHoy(asignacion.tz); // YYYY-MM-DD
-      const numeroDe = (maquinaId: string | null | undefined) =>
-        aeros.find((a) => a.id === maquinaId)?.numero ?? null;
+    if (!res || !asignacion) return;
+    const f = fechaHoy(asignacion.tz); // YYYY-MM-DD
+    const numeroDe = (maquinaId: string | null | undefined) =>
+      aeros.find((a) => a.id === maquinaId)?.numero ?? null;
+    const conCierre = [...eventos, { tipo: EVENTO_TIPO.SALIDA_PARQUE, ts: res.ts }];
+    if (externo) {
       setResumen(
-        resumenJornadaDesdeEventos(
-          [...eventos, { tipo: EVENTO_TIPO.SALIDA_PARQUE, ts: res.ts }],
-          {
-            operador: nombreTecnico ?? "—",
-            parque: asignacion.parque_nombre,
-            fecha: `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(0, 4)}`,
-          },
-          numeroDe,
+        textoResumenJornada(
+          resumenJornadaDesdeEventos(
+            conCierre,
+            {
+              operador: nombreTecnico ?? "—",
+              parque: asignacion.parque_nombre,
+              fecha: `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(0, 4)}`,
+            },
+            numeroDe,
+          ),
         ),
       );
-      setResumenEsFinal(tipo === EVENTO_TIPO.FINALIZAR_PARQUE);
+    } else {
+      const equipo = (await leerEquipoMiembros()) ?? nombreTecnico ?? "—";
+      setResumen(
+        textoResumenInterno(
+          resumenInternoDesdeEventos(
+            conCierre,
+            { ...encabezadoDia(f), parque: asignacion.parque_nombre, equipo },
+            numeroDe,
+          ),
+        ),
+      );
     }
+    setResumenEsFinal(tipo === EVENTO_TIPO.FINALIZAR_PARQUE);
   }
 
   /** STOP/RUN del externo con evidencia: registra y ofrece compartir. */
@@ -436,6 +470,7 @@ export function CheckIn({
       {modal === "aero" && (
         <ModalAero
           aeros={aeros}
+          inspeccionados={inspeccionados}
           onCerrar={() => setModal(null)}
           onElegir={(aero) => {
             if (externo) {
@@ -481,6 +516,7 @@ export function CheckIn({
       {modal === "standby" && (
         <ModalStandby
           busy={busy}
+          climaMotivos={climaMotivosDe(asignacion?.pais)}
           onCerrar={() => setModal(null)}
           onConfirmar={(motivo, motivoOtro) =>
             registrar(
@@ -541,7 +577,7 @@ export function CheckIn({
       )}
       {resumen && !compartir && (
         <ModalResumenDia
-          datos={resumen}
+          texto={resumen}
           esFinal={resumenEsFinal}
           onCerrar={() => {
             setResumen(null);
@@ -557,10 +593,12 @@ export function CheckIn({
 
 function ModalAero({
   aeros,
+  inspeccionados,
   onElegir,
   onCerrar,
 }: {
   aeros: AeroCache[];
+  inspeccionados: Set<string>; // ids ya inspeccionados → fondo verde tenue (no bloquea)
   onElegir: (a: AeroCache) => void;
   onCerrar: () => void;
 }) {
@@ -600,7 +638,11 @@ function ModalAero({
                 key={a.id}
                 type="button"
                 onClick={() => onElegir(a)}
-                className="rounded-lg border border-iner-green/25 bg-white px-2 py-3 text-sm font-bold text-iner-green transition hover:bg-iner-green-50"
+                className={`rounded-lg border px-2 py-3 text-sm font-bold transition ${
+                  inspeccionados.has(a.id)
+                    ? "border-iner-ok/40 bg-iner-ok-50 text-iner-ok hover:bg-iner-ok-50/70" // ya inspeccionada
+                    : "border-iner-green/25 bg-white text-iner-green hover:bg-iner-green-50"
+                }`}
               >
                 {a.nombre ?? `WTG ${a.numero}`}
               </button>
@@ -614,10 +656,12 @@ function ModalAero({
 
 function ModalStandby({
   busy,
+  climaMotivos,
   onConfirmar,
   onCerrar,
 }: {
   busy: boolean;
+  climaMotivos: ClimaMotivo[]; // sub-lista de Clima según el país
   onConfirmar: (motivo: StandbyMotivo, motivoOtro?: string) => void;
   onCerrar: () => void;
 }) {
@@ -694,7 +738,7 @@ function ModalStandby({
               ← Volver
             </button>
           </div>
-          {CLIMA_MOTIVOS.map((c) => (
+          {climaMotivos.map((c) => (
             <button
               key={c}
               type="button"

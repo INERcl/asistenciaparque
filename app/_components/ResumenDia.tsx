@@ -1,24 +1,23 @@
 "use client";
 
-// Resumen copiable de fin de día del externo: desglose STOP/RUN por turbina,
-// stand-by (motivo + horario) y salida del parque. Se muestra tras cerrar el día
+// Resumen copiable de fin de día. Recibe el texto ya armado (externo: STOP/RUN;
+// interno: Traslado/Subida/Salida por WTG). Se muestra tras cerrar el día
 // (salida_parque) o el parque (finalizar_parque).
 
 import { useState } from "react";
-import { type ResumenJornada, copiarTexto, textoResumenJornada } from "@/lib/compartir";
+import { copiarTexto } from "@/lib/compartir";
 import { Overlay } from "./Overlay";
 
 export function ModalResumenDia({
-  datos,
+  texto,
   esFinal,
   onCerrar,
 }: {
-  datos: ResumenJornada;
+  texto: string;
   esFinal: boolean; // finalizar_parque: al cerrar vuelve al onboarding
   onCerrar: () => void;
 }) {
   const [copiado, setCopiado] = useState<boolean | null>(null);
-  const texto = textoResumenJornada(datos);
 
   return (
     <Overlay>

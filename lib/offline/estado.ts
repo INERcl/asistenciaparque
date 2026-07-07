@@ -82,9 +82,10 @@ export function botonHabilitado(
     case EVENTO_TIPO.TRASLADO_MAQUINA:
       return externo
         ? false // el externo no registra traslado: se deriva del RUN→STOP en la planilla
-        : !e.diaCerrado && e.enParque && !e.trasladoHecho && !e.enTurbina; // 1×/día
+        : !e.diaCerrado && e.enParque && !e.enTurbina && !e.enTraslado; // 1× por turbina
     case EVENTO_TIPO.ENTRADA_WTG:
-      return !e.diaCerrado && e.enParque && !e.enTurbina; // no entrar si ya estás dentro
+      if (e.diaCerrado || !e.enParque || e.enTurbina) return false; // no entrar si ya estás dentro
+      return externo ? true : e.enTraslado; // interno: sube solo después de trasladar
     case EVENTO_TIPO.SALIDA_WTG:
       return !e.diaCerrado && e.enTurbina; // solo si estás dentro
     case EVENTO_TIPO.INICIO_ALMUERZO:

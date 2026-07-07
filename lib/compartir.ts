@@ -208,3 +208,137 @@ export function textoResumenJornada(d: ResumenJornada): string {
   lineas.push(`Fecha: ${d.fecha}`);
   return lineas.join("\n");
 }
+
+// ---------- Resumen de la jornada INTERNA (Argentina) ----------
+// Ciclo por turbina: Traslado → Subida → Salida. El resumen agrupa por WTG, con
+// la llegada a subestación y la salida de parque como líneas sueltas. Sin colación.
+
+export interface TurbinaInterna {
+  wtg: number | null;
+  traslado: string; // HH:MM o "—" (el traslado_maquina previo a la subida)
+  subida: string; // HH:MM
+  salida: string; // HH:MM o "—"
+}
+export interface StandbyInterno {
+  motivo: string; // etiqueta llana (ej. "Viento bajo")
+  inicio: string; // HH:MM
+  fin: string; // HH:MM o "—"
+}
+export interface ResumenInterno {
+  dia: string; // "Lunes"
+  fecha: string; // "6/07"
+  parque: string;
+  equipo: string;
+  llegada: string | null; // HH:MM (llegada a subestación)
+  turbinas: TurbinaInterna[];
+  standbys: StandbyInterno[];
+  salida: string | null; // HH:MM (salida de parque)
+}
+
+const DIAS_SEMANA = [
+  "Domingo",
+  "Lunes",
+  "Martes",
+  "Miércoles",
+  "Jueves",
+  "Viernes",
+  "Sábado",
+];
+
+// Línea separadora del resumen interno.
+const SEP = "―――――――――――――――――――·――――――――――――――――――――";
+
+/** Encabezado del resumen interno desde "YYYY-MM-DD": { dia: "Lunes", fecha: "6/07" }.
+ *  Parsea por componentes (fecha local) para no correr el día por zona horaria. */
+export function encabezadoDia(fechaYMD: string): { dia: string; fecha: string } {
+  const [y, m, d] = fechaYMD.split("-").map(Number);
+  const dow = new Date(y, m - 1, d).getDay();
+  return { dia: DIAS_SEMANA[dow] ?? "", fecha: `${d}/${String(m).padStart(2, "0")}` };
+}
+
+/** Etiqueta llana del stand-by (sin el prefijo "Clima ->" del externo). */
+function motivoStandbyPlano(motivo?: string | null, motivoOtro?: string | null): string {
+  return (
+    motivoOtro?.trim() ||
+    (motivo ? (STANDBY_MOTIVO_LABEL[motivo as StandbyMotivo] ?? motivo) : "Stand-by")
+  );
+}
+
+/** Arma el resumen interno estructurado. `eventos` puede venir sin ordenar;
+ *  `resolverWtg` mapea maquina_id → número de WTG cuando el evento no lo trae. */
+export function resumenInternoDesdeEventos(
+  eventos: EventoResumen[],
+  meta: { dia: string; fecha: string; parque: string; equipo: string },
+  resolverWtg?: (maquinaId: string | null | undefined) => number | null,
+): ResumenInterno {
+  const orden = [...eventos].sort((a, b) => a.ts.localeCompare(b.ts));
+  const turbinas: TurbinaInterna[] = [];
+  const standbys: StandbyInterno[] = [];
+  let llegada: string | null = null;
+  let salida: string | null = null;
+  let ultimoTraslado: string | null = null;
+
+  for (let i = 0; i < orden.length; i++) {
+    const e = orden[i];
+    const sig = orden[i + 1];
+    if (e.tipo === EVENTO_TIPO.ENTRADA_PARQUE) {
+      llegada = hhmm(e.ts);
+    } else if (e.tipo === EVENTO_TIPO.TRASLADO_MAQUINA) {
+      ultimoTraslado = hhmm(e.ts);
+    } else if (e.tipo === EVENTO_TIPO.ENTRADA_WTG) {
+      const cierra = sig != null && CIERRAN_AERO.includes(sig.tipo);
+      const wtg = e.numero ?? resolverWtg?.(e.maquinaId) ?? null;
+      turbinas.push({
+        wtg,
+        traslado: ultimoTraslado ?? SIN_HORA,
+        subida: hhmm(e.ts),
+        salida: cierra ? hhmm(sig.ts) : SIN_HORA,
+      });
+      ultimoTraslado = null; // el traslado aplica a una sola subida
+    } else if (e.tipo === EVENTO_TIPO.INICIO_STANDBY) {
+      standbys.push({
+        motivo: motivoStandbyPlano(e.motivo, e.motivoOtro),
+        inicio: hhmm(e.ts),
+        fin: sig != null ? hhmm(sig.ts) : SIN_HORA,
+      });
+    } else if (
+      e.tipo === EVENTO_TIPO.SALIDA_PARQUE ||
+      e.tipo === EVENTO_TIPO.FINALIZAR_PARQUE
+    ) {
+      salida = hhmm(e.ts);
+    }
+  }
+  return { ...meta, llegada, turbinas, standbys, salida };
+}
+
+/** Texto copiable del resumen de la jornada interna (formato acordado con el equipo). */
+export function textoResumenInterno(d: ResumenInterno): string {
+  const lineas: string[] = [
+    `${d.dia} ${d.fecha}`,
+    `Parque: ${d.parque}`,
+    `Equipo: ${d.equipo}`,
+    SEP,
+  ];
+  if (d.llegada) lineas.push(`Llegada a subestación: ${d.llegada}`);
+  for (const t of d.turbinas) {
+    lineas.push(
+      `Traslado turbina: ${t.traslado}`,
+      `*WTG ${t.wtg ?? "—"}*`,
+      `Subida: ${t.subida}`,
+      `Salida: ${t.salida}`,
+    );
+  }
+  if (d.standbys.length > 0) {
+    lineas.push(SEP);
+    for (const s of d.standbys) {
+      lineas.push(
+        `Stand-By Motivo: ${s.motivo}`,
+        `Hora de inicio SB: ${s.inicio}`,
+        `Hora fin SB: ${s.fin}`,
+      );
+    }
+    lineas.push(SEP);
+  }
+  if (d.salida) lineas.push(`Salida de Parque: ${d.salida}`);
+  return lineas.join("\n");
+}

@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { type Pais, type Subtipo } from "@/lib/catalogos";
-import { guardarPerfil } from "@/lib/offline/sesion";
+import { guardarEquipoMiembros, guardarPerfil } from "@/lib/offline/sesion";
+import { refrescarEquipoMiembros } from "@/lib/equipo";
 import { emailAUsuario, usuarioAEmail } from "@/lib/usuario";
 import { Hero } from "./Hero";
 import { InstallButton } from "./InstallButton";
@@ -43,6 +44,8 @@ export function Login({ onLogged }: { onLogged: () => void }) {
           pais: perfil.pais as Pais | null,
           equipo_id: perfil.equipo_id,
         });
+        // Nombres del equipo para el resumen interno (solo AR interna tiene equipo).
+        await refrescarEquipoMiembros(perfil);
       } else {
         const usuarioNorm = data.user.email
           ? emailAUsuario(data.user.email)
@@ -57,6 +60,7 @@ export function Login({ onLogged }: { onLogged: () => void }) {
           pais: null,
           equipo_id: null,
         });
+        await guardarEquipoMiembros(usuarioNorm);
       }
       onLogged();
     } catch (err) {

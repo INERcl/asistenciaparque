@@ -6,14 +6,17 @@
 // detallado (mismo formato que el cierre de día) y permite copiarlo entero.
 
 import { useEffect, useState } from "react";
-import { TZ_POR_PAIS } from "@/lib/catalogos";
+import { SUBTIPO, TZ_POR_PAIS, type Subtipo } from "@/lib/catalogos";
 import {
   type EventoResumen,
   copiarTexto,
+  encabezadoDia,
+  resumenInternoDesdeEventos,
   resumenJornadaDesdeEventos,
+  textoResumenInterno,
   textoResumenJornada,
 } from "@/lib/compartir";
-import { leerParques, leerPerfil } from "@/lib/offline/sesion";
+import { leerEquipoMiembros, leerParques, leerPerfil } from "@/lib/offline/sesion";
 import { createClient } from "@/lib/supabase/client";
 import { TZ_DEFAULT, ahoraISO } from "@/lib/tiempo";
 
@@ -21,6 +24,7 @@ interface JornadaFila {
   id: string;
   fecha: string; // YYYY-MM-DD
   parque_id: string;
+  subtipo: Subtipo | null;
 }
 
 interface EventoRow {
@@ -44,6 +48,7 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
   const [nombreParque, setNombreParque] = useState<Record<string, string>>({});
   const [tzParque, setTzParque] = useState<Record<string, string>>({});
   const [operador, setOperador] = useState("—");
+  const [equipo, setEquipo] = useState("—");
   const [expandida, setExpandida] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,6 +63,7 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
         return;
       }
       setOperador(perfil.nombre ?? "—");
+      setEquipo((await leerEquipoMiembros()) ?? perfil.nombre ?? "—");
       const parques = (await leerParques()) ?? [];
       setNombreParque(Object.fromEntries(parques.map((p) => [p.id, p.nombre])));
       setTzParque(Object.fromEntries(parques.map((p) => [p.id, TZ_POR_PAIS[p.pais]])));
@@ -65,7 +71,7 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
         const supabase = createClient();
         const { data, error } = await supabase
           .from("jornadas")
-          .select("id, fecha, parque_id")
+          .select("id, fecha, parque_id, subtipo")
           .eq("tecnico_id", perfil.id)
           .order("fecha", { ascending: false });
         if (error) {
@@ -116,6 +122,7 @@ export function Jornadas({ onBack }: { onBack: () => void }) {
               parque={nombreParque[j.parque_id] ?? j.parque_id}
               tz={tzParque[j.parque_id] ?? TZ_DEFAULT}
               operador={operador}
+              equipo={equipo}
               abierta={expandida === j.id}
               onToggle={() => setExpandida((cur) => (cur === j.id ? null : j.id))}
             />
@@ -130,6 +137,7 @@ function JornadaCard({
   parque,
   tz,
   operador,
+  equipo,
   abierta,
   onToggle,
 }: {
@@ -137,6 +145,7 @@ function JornadaCard({
   parque: string;
   tz: string;
   operador: string;
+  equipo: string;
   abierta: boolean;
   onToggle: () => void;
 }) {
@@ -175,19 +184,39 @@ function JornadaCard({
             motivoOtro: e.motivo_otro,
           };
         });
-        const datos = resumenJornadaDesdeEventos(eventos, {
-          operador,
-          parque,
-          fecha: fechaLarga(jornada.fecha),
-        });
-        setTexto(textoResumenJornada(datos));
+        if (jornada.subtipo === SUBTIPO.INSPECTOR_EXTERNO) {
+          const datos = resumenJornadaDesdeEventos(eventos, {
+            operador,
+            parque,
+            fecha: fechaLarga(jornada.fecha),
+          });
+          setTexto(textoResumenJornada(datos));
+        } else {
+          const datos = resumenInternoDesdeEventos(eventos, {
+            ...encabezadoDia(jornada.fecha),
+            parque,
+            equipo,
+          });
+          setTexto(textoResumenInterno(datos));
+        }
       } catch {
         setError(true);
       } finally {
         setCargando(false);
       }
     })();
-  }, [abierta, texto, cargando, jornada.id, jornada.fecha, operador, parque, tz]);
+  }, [
+    abierta,
+    texto,
+    cargando,
+    jornada.id,
+    jornada.fecha,
+    jornada.subtipo,
+    operador,
+    parque,
+    equipo,
+    tz,
+  ]);
 
   return (
     <div className="overflow-hidden rounded-lg border border-black/10 bg-white">
