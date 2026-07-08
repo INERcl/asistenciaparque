@@ -185,6 +185,13 @@ export function climaMotivosDe(pais: Pais | null | undefined): ClimaMotivo[] {
   return pais === PAIS.ARGENTINA ? CLIMA_MOTIVOS_AR : CLIMA_MOTIVOS_DEFAULT;
 }
 
+/** ¿El inspector externo de este país registra STOP/RUN con foto de evidencia?
+ *  Chile sí (foto + compartir por WhatsApp); Argentina (Naretto) no: registra
+ *  directo con un botón, sin foto ni compartir. */
+export function usaFotoEvidencia(pais: Pais | null | undefined): boolean {
+  return pais !== PAIS.ARGENTINA;
+}
+
 export const PAISES = [
   { id: PAIS.ARGENTINA, label: "Argentina" },
   { id: PAIS.CHILE, label: "Chile" },

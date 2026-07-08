@@ -21,6 +21,7 @@ import {
   climaMotivosDe,
   labelEvento,
   paisConfigDe,
+  usaFotoEvidencia,
 } from "@/lib/catalogos";
 import {
   encabezadoDia,
@@ -253,7 +254,8 @@ export function CheckIn({
     setResumenEsFinal(tipo === EVENTO_TIPO.FINALIZAR_PARQUE);
   }
 
-  /** STOP/RUN del externo con evidencia: registra y ofrece compartir. */
+  /** STOP/RUN del externo: registra el evento. Con foto (Chile) ofrece compartir
+   *  la evidencia; con foto=null (Argentina/Naretto) solo registra, sin compartir. */
   async function registrarConEvidencia(
     tipo: EventoTipo,
     aero: AeroCache,
@@ -337,6 +339,8 @@ export function CheckIn({
   const etq = (tipo: EventoTipo) => labelEvento(tipo, subtipo);
   const botones = botonesDe(subtipo, paisConfig);
   const nombreParque = asignacion?.parque_nombre ?? "—";
+  // Externo con foto (Chile) vs sin foto (Argentina/Naretto: registra directo).
+  const externoConFoto = externo && usaFotoEvidencia(asignacion?.pais);
 
   return (
     <main className="mx-auto flex min-h-full w-full max-w-md flex-1 flex-col">
@@ -393,9 +397,17 @@ export function CheckIn({
             busy ||
             !on(externo && estado.enTurbina ? EVENTO_TIPO.SALIDA_WTG : botones.destacado)
           }
-          onClick={() =>
-            setModal(externo && estado.enTurbina ? "evidencia-run" : "aero")
-          }
+          onClick={() => {
+            if (externo && estado.enTurbina) {
+              // RUN. Con foto (Chile): modal de evidencia. Sin foto (Argentina):
+              // registra directo el cierre del aero abierto.
+              if (externoConFoto) setModal("evidencia-run");
+              else if (aeroActual)
+                void registrarConEvidencia(EVENTO_TIPO.SALIDA_WTG, aeroActual, null);
+            } else {
+              setModal("aero"); // STOP (elegir aero) o interno (subida)
+            }
+          }}
           className="w-full rounded-xl bg-iner-green px-4 py-5 text-center text-base font-bold text-white shadow-sm transition hover:bg-iner-green-700 disabled:opacity-50"
         >
           {externo && estado.enTurbina
@@ -473,10 +485,13 @@ export function CheckIn({
           inspeccionados={inspeccionados}
           onCerrar={() => setModal(null)}
           onElegir={(aero) => {
-            if (externo) {
-              // El STOP del externo lleva foto de evidencia antes de registrar.
+            if (externoConFoto) {
+              // El STOP del externo con foto lleva evidencia antes de registrar.
               setAeroElegido(aero);
               setModal("evidencia-stop");
+            } else if (externo) {
+              // Externo sin foto (Argentina): registra el STOP directo.
+              void registrarConEvidencia(EVENTO_TIPO.ENTRADA_WTG, aero, null);
             } else {
               void registrar(
                 { tipo: EVENTO_TIPO.ENTRADA_WTG, maquinaId: aero.id },
