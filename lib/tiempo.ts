@@ -52,6 +52,11 @@ export function ahoraISO(tz: string, date: Date = new Date()): string {
   return `${g("year")}-${g("month")}-${g("day")}T${hora}:${g("minute")}:${g("second")}${offset(tz, date)}`;
 }
 
+/** Hora de pared local "HH:MM" en la TZ dada (para comparar contra un corte). */
+export function horaLocal(tz: string, date: Date = new Date()): string {
+  return ahoraISO(tz, date).slice(11, 16);
+}
+
 // --- Wrappers deprecados (compatibilidad; anclados a Chile) ---------------
 /** @deprecated usar `fechaHoy(tz)` con la TZ del país del parque. */
 export const fechaHoyChile = (date: Date = new Date()) => fechaHoy(TZ_DEFAULT, date);

@@ -151,7 +151,9 @@ function etiquetaStandby(motivo?: string | null, motivoOtro?: string | null): st
   const base = motivo
     ? (STANDBY_MOTIVO_LABEL[motivo as StandbyMotivo] ?? motivo)
     : "Stand-by";
-  return detalle ? `${base} -> ${detalle}` : base;
+  if (!detalle) return base;
+  if (detalle.includes(" · ")) return detalle; // multi-motivo: ya trae base + extras
+  return `${base} -> ${detalle}`; // single clima: "Clima -> Viento alto"
 }
 
 /** Arma el resumen estructurado de la jornada. `eventos` puede venir sin ordenar;

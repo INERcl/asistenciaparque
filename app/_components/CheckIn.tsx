@@ -11,8 +11,10 @@ import {
   MOTIVOS_REQUIEREN_TEXTO,
   PAIS_CONFIG_DEFAULT,
   type PaisConfig,
+  SALIDA_TEMPRANA_CORTE,
   STANDBY_MOTIVO,
   STANDBY_MOTIVOS,
+  STANDBY_MOTIVOS_SIMPLES,
   STANDBY_MOTIVO_LABEL,
   SUBTIPO,
   type StandbyMotivo,
@@ -31,7 +33,7 @@ import {
   textoResumenInterno,
   textoResumenJornada,
 } from "@/lib/compartir";
-import { fechaHoy } from "@/lib/tiempo";
+import { fechaHoy, horaLocal } from "@/lib/tiempo";
 import { refrescarEquipoMiembros } from "@/lib/equipo";
 import { createClient } from "@/lib/supabase/client";
 import { registrarEvento } from "@/lib/offline/registrarEvento";
@@ -110,6 +112,7 @@ type Modal =
   | "evidencia-run"
   | "standby"
   | "salida"
+  | "salida-standby"
   | "finalizar"
   | "cancelar"
   | "logout";
@@ -215,7 +218,27 @@ export function CheckIn({
    *  o interno Traslado/Subida/Salida). Los eventos del día se leen ANTES de
    *  registrar el cierre (finalizar_parque limpia el detalle local y la
    *  asignación); la hora de salida sale de res.ts. */
-  async function cerrar(tipo: EventoTipo) {
+  async function cerrar(
+    tipo: EventoTipo,
+    standby?: { motivo: StandbyMotivo; motivoOtro?: string },
+  ) {
+    if (busy) return; // guarda de reentrada (el stand-by de abajo no pasa por `registrar`)
+    // Salida temprana: se registra un stand-by con su motivo ANTES de cerrar (y
+    // antes de leer los eventos del día). Va directo a registrarEvento — no al
+    // wrapper registrar — para no chocar con el debounce `busy`, que bloquearía
+    // la segunda llamada. El motivo fluye a las observaciones del reporte.
+    if (standby) {
+      try {
+        await registrarEvento({
+          tipo: EVENTO_TIPO.INICIO_STANDBY,
+          motivo: standby.motivo,
+          motivoOtro: standby.motivoOtro,
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "No se pudo registrar el motivo.");
+        return;
+      }
+    }
     const eventos = asignacion
       ? await leerEventosDetalle(`${asignacion.id}_${fechaHoy(asignacion.tz)}`)
       : [];
@@ -463,7 +486,13 @@ export function CheckIn({
           <button
             type="button"
             disabled={busy || !on(EVENTO_TIPO.SALIDA_PARQUE)}
-            onClick={() => setModal("salida")}
+            onClick={() => {
+              // El externo que cierra antes del corte pide motivo (registra un
+              // stand-by); interno y salida en horario cierran directo.
+              const temprana =
+                externo && !!asignacion && horaLocal(asignacion.tz) < SALIDA_TEMPRANA_CORTE;
+              setModal(temprana ? "salida-standby" : "salida");
+            }}
             className="btn-secondary w-full disabled:opacity-40"
           >
             {etq(EVENTO_TIPO.SALIDA_PARQUE)} · cierra el día
@@ -550,6 +579,19 @@ export function CheckIn({
           textoOk="Registrar salida"
           onCerrar={() => setModal(null)}
           onOk={() => void cerrar(EVENTO_TIPO.SALIDA_PARQUE)}
+        />
+      )}
+      {modal === "salida-standby" && (
+        <ModalStandby
+          busy={busy}
+          climaMotivos={climaMotivosDe(asignacion?.pais)}
+          titulo="Salida temprana"
+          nota={`Estás cerrando antes de las ${SALIDA_TEMPRANA_CORTE}. Indicá el motivo.`}
+          textoOk="Registrar salida"
+          onCerrar={() => setModal(null)}
+          onConfirmar={(motivo, motivoOtro) =>
+            void cerrar(EVENTO_TIPO.SALIDA_PARQUE, { motivo, motivoOtro })
+          }
         />
       )}
       {modal === "finalizar" && (
@@ -672,17 +714,24 @@ function ModalAero({
 function ModalStandby({
   busy,
   climaMotivos,
+  titulo = "Motivo del stand-by",
+  nota,
+  textoOk = "Registrar stand-by",
   onConfirmar,
   onCerrar,
 }: {
   busy: boolean;
   climaMotivos: ClimaMotivo[]; // sub-lista de Clima según el país
+  titulo?: string;
+  nota?: string; // línea de ayuda opcional bajo el título
+  textoOk?: string;
   onConfirmar: (motivo: StandbyMotivo, motivoOtro?: string) => void;
   onCerrar: () => void;
 }) {
   const [motivo, setMotivo] = useState<StandbyMotivo | null>(null);
   const [texto, setTexto] = useState("");
   const [clima, setClima] = useState<ClimaMotivo | null>(null);
+  const [extras, setExtras] = useState<Set<StandbyMotivo>>(new Set());
   const requiereTexto = motivo != null && MOTIVOS_REQUIEREN_TEXTO.includes(motivo);
   const requiereSublista = motivo != null && MOTIVOS_REQUIEREN_SUBLISTA.includes(motivo);
   const puedeConfirmar =
@@ -693,27 +742,53 @@ function ModalStandby({
   function elegirMotivo(m: StandbyMotivo) {
     setMotivo(m);
     setClima(null); // el sub-motivo aplica solo a clima; se resetea al cambiar
+    // el base no puede estar también como extra
+    setExtras((prev) => {
+      if (!prev.has(m)) return prev;
+      const sig = new Set(prev);
+      sig.delete(m);
+      return sig;
+    });
+  }
+
+  function alternarExtra(m: StandbyMotivo) {
+    setExtras((prev) => {
+      const sig = new Set(prev);
+      if (sig.has(m)) sig.delete(m);
+      else sig.add(m);
+      return sig;
+    });
   }
 
   function confirmar() {
     if (!motivo) return;
-    // clima → guarda la etiqueta del sub-motivo; otros → el texto libre; resto → nada.
-    const detalle = requiereSublista
+    // clima → etiqueta del sub-motivo; otros → texto libre; resto → nada.
+    const baseDetalle = requiereSublista
       ? clima
         ? CLIMA_MOTIVO_LABEL[clima]
         : undefined
       : texto.trim() || undefined;
+    // Sin extras: se guarda igual que hoy. Con extras: base (etiqueta o detalle)
+    // + cada extra, concatenados en motivo_otro; motivo sigue siendo el base.
+    const etiquetasExtra = STANDBY_MOTIVOS_SIMPLES.filter(
+      (m) => m !== motivo && extras.has(m),
+    ).map((m) => STANDBY_MOTIVO_LABEL[m]);
+    const detalle =
+      etiquetasExtra.length === 0
+        ? baseDetalle
+        : [baseDetalle ?? STANDBY_MOTIVO_LABEL[motivo], ...etiquetasExtra].join(" · ");
     onConfirmar(motivo, detalle);
   }
 
   return (
     <Overlay>
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-base font-bold">Motivo del stand-by</h2>
+        <h2 className="text-base font-bold">{titulo}</h2>
         <button type="button" onClick={onCerrar} className="text-sm text-iner-gray">
           Cancelar
         </button>
       </div>
+      {nota && <p className="mb-3 text-sm text-iner-gray">{nota}</p>}
       <div className="space-y-2">
         {STANDBY_MOTIVOS.map((m) => (
           <button
@@ -785,13 +860,41 @@ function ModalStandby({
           onChange={(e) => setTexto(e.target.value)}
         />
       )}
+
+      {motivo != null && (
+        <div className="mt-3 space-y-2 border-t border-black/10 pt-3">
+          <p className="text-xs font-semibold text-iner-gray">Otros motivos (opcional)</p>
+          {STANDBY_MOTIVOS_SIMPLES.filter((m) => m !== motivo).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => alternarExtra(m)}
+              className={`flex w-full items-center justify-between rounded-lg border px-3 py-3 text-sm font-semibold transition ${
+                extras.has(m)
+                  ? "border-iner-green bg-iner-green-50 text-iner-green"
+                  : "border-black/15 bg-white text-foreground"
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                {(() => {
+                  const Icono = STANDBY_MOTIVO_ICON[m];
+                  return <Icono size={20} className="shrink-0" />;
+                })()}
+                {STANDBY_MOTIVO_LABEL[m]}
+              </span>
+              {extras.has(m) && <span>✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
       <button
         type="button"
         disabled={!puedeConfirmar || busy}
         onClick={confirmar}
         className="btn-primary mt-4 w-full"
       >
-        Registrar stand-by
+        {textoOk}
       </button>
     </Overlay>
   );

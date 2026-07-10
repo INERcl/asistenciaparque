@@ -106,7 +106,7 @@ export const CLIMA_MOTIVOS = Object.values(CLIMA_MOTIVO);
 
 export const CLIMA_MOTIVO_LABEL: Record<ClimaMotivo, string> = {
   [CLIMA_MOTIVO.VIENTO]: "Velocidad del viento",
-  [CLIMA_MOTIVO.LLUVIA]: "Lluvia/llovizna",
+  [CLIMA_MOTIVO.LLUVIA]: "Caída de agua",
   [CLIMA_MOTIVO.NIEBLA]: "Niebla",
   [CLIMA_MOTIVO.NIEVE]: "Nieve",
   [CLIMA_MOTIVO.GRANIZO]: "Granizo",
@@ -118,6 +118,18 @@ export const CLIMA_MOTIVO_LABEL: Record<ClimaMotivo, string> = {
 
 // Motivos que abren una segunda lista de sub-motivos en vez de texto libre.
 export const MOTIVOS_REQUIEREN_SUBLISTA: StandbyMotivo[] = [STANDBY_MOTIVO.CLIMA];
+
+// Motivos elegibles como extra en un stand-by (solo etiqueta): excluye los que
+// requieren detalle propio (Clima → sub-lista, Otros → texto). Si hace falta ese
+// detalle, ese motivo va como base. Ver ModalStandby en CheckIn.tsx.
+export const STANDBY_MOTIVOS_SIMPLES: StandbyMotivo[] = STANDBY_MOTIVOS.filter(
+  (m) => !MOTIVOS_REQUIEREN_TEXTO.includes(m) && !MOTIVOS_REQUIEREN_SUBLISTA.includes(m),
+);
+
+// Hora local del parque (HH:MM) antes de la cual la "Salida de parque" de un
+// externo se considera temprana y pide motivo (registra un stand-by). De este
+// corte en adelante cierra directo. Ver cerrar()/ModalStandby en CheckIn.tsx.
+export const SALIDA_TEMPRANA_CORTE = "16:30";
 
 export const ROL = { TECNICO: "tecnico", ADMIN: "admin" } as const;
 
