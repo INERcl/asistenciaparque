@@ -17,11 +17,13 @@ grant select on
   public.reporte_resumen,        -- interno: tablero
   public.reporte_externo,        -- externo (PLOM): fila por aero visitado
   public.reporte_externo_resumen, -- externo (PLOM): RESUMEN
-  public.resumen_asistencia      -- externo: Consolidado (una fila por parque) — 0002
+  public.resumen_asistencia,     -- externo: Consolidado (una fila por parque) — 0002
+  public.resumen_interno         -- interno: pestaña Resumen (grupo × parque) — 0014
   to n8n_reader;
 
--- Nota: el grant de resumen_asistencia lo aplica también la migración
--- supabase/migrations/0002_asistencia_externa.sql (esta línea deja constancia).
+-- Nota: los grants de resumen_asistencia y resumen_interno los aplican también
+-- las migraciones 0002_asistencia_externa.sql y 0014_resumen_interno.sql
+-- (estas líneas dejan constancia).
 
 -- Conexión desde n8n (credencial Postgres):
 --   host = <pooler de Supabase>   port = 5432 (modo sesión)   db = postgres
