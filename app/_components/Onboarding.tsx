@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { ESTADO_ASIGNACION, PAIS_LABEL, type Pais, TZ_POR_PAIS } from "@/lib/catalogos";
+import {
+  ESTADO_ASIGNACION,
+  PAIS_LABEL,
+  type Pais,
+  TZ_POR_PAIS,
+  columnaParquePermitida,
+} from "@/lib/catalogos";
 import {
   type EventoParaSiembra,
   inspeccionadosDesdeEventos,
@@ -102,11 +108,13 @@ export function Onboarding({
           await guardarPaisesConfig(cfg);
         }
 
-        // Parques del país del técnico (si el perfil trae país; si no, todos).
+        // Parques del país del técnico (si el perfil trae país; si no, todos) y
+        // de su flujo: la interna y la externa no visitan los mismos parques.
         let q = supabase
           .from("parques")
           .select("id, nombre, pais, empresa_id, turbinas")
-          .eq("activo", true);
+          .eq("activo", true)
+          .eq(columnaParquePermitida(perfil?.subtipo ?? null), true);
         if (perfil?.pais) q = q.eq("pais", perfil.pais);
         const { data, error } = await q.order("pais").order("orden");
         if (error) throw error;
@@ -207,6 +215,10 @@ export function Onboarding({
 
           {cargando ? (
             <p className="py-8 text-center text-sm text-iner-gray">Cargando parques…</p>
+          ) : parques.length === 0 && !error ? (
+            <p className="py-8 text-center text-sm text-iner-gray">
+              No hay parques asignados a tu perfil. Comunícate con tu supervisor.
+            </p>
           ) : (
             <div className="space-y-4">
               {paises.map((pais) => (

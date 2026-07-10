@@ -81,6 +81,9 @@ insert into public.parques (id, nombre, pais, empresa_id, turbinas, activo, orde
   ('ar_chubut_norte', 'PE Chubut Norte', 'argentina', null, 8, true, 35),
   ('ar_bicentenario', 'PE Bicentenario', 'argentina', null, 28, true, 36),
   ('ar_bicentenario_ii', 'PE Bicentenario II', 'argentina', null, 7, true, 37)
+-- permite_interno/permite_externo quedan en su default (solo externo) y NO se
+-- listan en el do update: el reparto por flujo lo fija 0015_parques_por_subtipo.sql
+-- y un re-seed no debe pisarlo.
 on conflict (id) do update set
   nombre = excluded.nombre, pais = excluded.pais,
   empresa_id = excluded.empresa_id, turbinas = excluded.turbinas,

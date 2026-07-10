@@ -340,3 +340,11 @@ export function botonesDe(
     directos: base.directos.filter((t) => t !== EVENTO_TIPO.INICIO_ALMUERZO),
   };
 }
+
+/** Columna de `parques` que habilita el catálogo para este subtipo: la interna y
+ *  la externa no visitan los mismos parques (ver 0015_parques_por_subtipo.sql). */
+export function columnaParquePermitida(
+  subtipo: Subtipo | null,
+): "permite_interno" | "permite_externo" {
+  return subtipo === SUBTIPO.INSPECTOR_EXTERNO ? "permite_externo" : "permite_interno";
+}
