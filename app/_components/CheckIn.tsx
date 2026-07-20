@@ -5,13 +5,17 @@ import {
   CLIMA_MOTIVO,
   CLIMA_MOTIVO_LABEL,
   type ClimaMotivo,
+  type EstadoTurbina,
   EVENTO_TIPO,
   type EventoTipo,
+  type Lado,
   MOTIVOS_REQUIEREN_SUBLISTA,
   MOTIVOS_REQUIEREN_TEXTO,
   HORA_SALIDA_ESTABLECIDA,
   PAIS_CONFIG_DEFAULT,
+  PALAS,
   type PaisConfig,
+  type Pala,
   SALIDA_TEMPRANA_CORTE,
   STANDBY_MOTIVO,
   STANDBY_MOTIVOS,
@@ -21,9 +25,13 @@ import {
   type StandbyMotivo,
   type Subtipo,
   botonesDe,
+  cavidadesFaltantes,
   climaMotivosDe,
+  estadoTurbina,
   labelEvento,
+  ladosPendientes,
   paisConfigDe,
+  palasCompletas,
   usaFotoEvidencia,
 } from "@/lib/catalogos";
 import {
@@ -46,6 +54,7 @@ import {
   getTiposJornada,
 } from "@/lib/offline/estado";
 import {
+  type CavidadesPorAero,
   type EventoParaSiembra,
   inspeccionadosDesdeEventos,
   leerAeroActual,
@@ -118,6 +127,7 @@ type Modal =
   | "aero"
   | "evidencia-stop"
   | "evidencia-run"
+  | "salida-wtg"
   | "standby"
   | "salida"
   | "salida-opciones"
@@ -161,8 +171,9 @@ export function CheckIn({
   const [compartir, setCompartir] = useState<Compartible | null>(null);
   const [resumen, setResumen] = useState<string | null>(null); // texto ya armado
   const [resumenEsFinal, setResumenEsFinal] = useState(false);
-  // Ids de aero ya inspeccionados (acumulado de la asignación) → tinte verde en el selector.
-  const [inspeccionados, setInspeccionados] = useState<Set<string>>(new Set());
+  // Cavidades inspeccionadas por aero (acumulado de la asignación) → tinte de la
+  // grilla (gris/ámbar/verde) y precarga del modal de salida.
+  const [cavidades, setCavidades] = useState<CavidadesPorAero>({});
 
   const externo = subtipo === SUBTIPO.INSPECTOR_EXTERNO;
 
@@ -186,15 +197,17 @@ export function CheckIn({
         setAeros(lista);
         const jornadaId = `${a.id}_${fechaHoy(a.tz)}`;
         setEstado(estadoDesdeEventos(await getTiposJornada(jornadaId)));
-        setInspeccionados(new Set(await leerInspeccionados(a.id)));
-        // Verde compartido: siembra las turbinas que el equipo/técnico YA
-        // inspeccionó en ESTE parque (otras asignaciones / histórico), para que
-        // no se re-inspeccionen. La RLS de equipo (0011/0012) acota lo visible.
+        setCavidades(await leerInspeccionados(a.id));
+        // Verde compartido: siembra las cavidades que el equipo/técnico YA
+        // inspeccionó en ESTE parque (otras asignaciones / histórico), para retomar
+        // parciales y no re-inspeccionar. La RLS de equipo (0011/0012) acota lo visible.
         if (navigator.onLine) {
           try {
             const { data: evs } = await createClient()
               .from("eventos")
-              .select("tipo, maquina_id, ts_dispositivo, jornada_id, jornadas!inner(parque_id)")
+              .select(
+                "tipo, maquina_id, palas, ts_dispositivo, jornada_id, jornadas!inner(parque_id)",
+              )
               .eq("jornadas.parque_id", a.parque_id)
               .in("tipo", ["entrada_wtg", "salida_wtg", "salida_parque", "finalizar_parque"])
               .order("ts_dispositivo");
@@ -203,7 +216,7 @@ export function CheckIn({
                 a.id,
                 inspeccionadosDesdeEventos(evs as unknown as EventoParaSiembra[]),
               );
-              setInspeccionados(new Set(await leerInspeccionados(a.id)));
+              setCavidades(await leerInspeccionados(a.id));
             }
           } catch {
             // sin red / sin permiso: se queda con el acumulado local.
@@ -226,11 +239,9 @@ export function CheckIn({
     try {
       const res = await registrarEvento(input);
       setEstado(res.estado);
-      // Refresca el acumulado de inspeccionados (una salida acaba de completar un aero).
+      // Refresca el acumulado de cavidades (una salida acaba de acreditar palas).
       if (asignacion) {
-        void leerInspeccionados(asignacion.id).then((ids) =>
-          setInspeccionados(new Set(ids)),
-        );
+        void leerInspeccionados(asignacion.id).then(setCavidades);
       }
       setUltimo(`${feedback} · ${new Date().toLocaleTimeString("es-CL", {
         hour: "2-digit",
@@ -503,7 +514,11 @@ export function CheckIn({
               key={tipo}
               type="button"
               disabled={busy || !on(tipo)}
-              onClick={() => registrar({ tipo }, etq(tipo))}
+              onClick={() => {
+                // Interno: la salida de máquina confirma las palas (A/B/C) antes de registrar.
+                if (!externo && tipo === EVENTO_TIPO.SALIDA_WTG) setModal("salida-wtg");
+                else registrar({ tipo }, etq(tipo));
+              }}
               className="rounded-xl border border-iner-green/25 bg-white px-3 py-4 text-sm font-bold text-iner-green shadow-sm transition hover:bg-iner-green-50 disabled:opacity-40"
             >
               {etq(tipo)}
@@ -525,6 +540,12 @@ export function CheckIn({
             type="button"
             disabled={busy || !on(EVENTO_TIPO.SALIDA_PARQUE)}
             onClick={() => {
+              // Interno con la turbina abierta: resolvé primero la salida de máquina
+              // (palas) para no acreditar una turbina entera por error.
+              if (!externo && estado.enTurbina) {
+                setModal("salida-wtg");
+                return;
+              }
               // Antes del corte se elige marcar stand-by o salida normal; pasado
               // el corte cierra directo (salida normal).
               const temprana =
@@ -538,7 +559,13 @@ export function CheckIn({
           <button
             type="button"
             disabled={busy || !on(EVENTO_TIPO.FINALIZAR_PARQUE)}
-            onClick={() => setModal("finalizar")}
+            onClick={() => {
+              if (!externo && estado.enTurbina) {
+                setModal("salida-wtg");
+                return;
+              }
+              setModal("finalizar");
+            }}
             className="w-full rounded-lg border border-red-600/40 bg-white px-4 py-3 text-sm font-bold text-red-700 transition hover:bg-red-50 disabled:opacity-40"
           >
             {etq(EVENTO_TIPO.FINALIZAR_PARQUE)} · cierra el parque
@@ -549,7 +576,8 @@ export function CheckIn({
       {modal === "aero" && (
         <ModalAero
           aeros={aeros}
-          inspeccionados={inspeccionados}
+          cavidades={cavidades}
+          leyenda={!externo}
           onCerrar={() => setModal(null)}
           onElegir={(aero) => {
             if (externoConFoto) {
@@ -560,11 +588,33 @@ export function CheckIn({
               // Externo sin foto (Argentina): registra el STOP directo.
               void registrarConEvidencia(EVENTO_TIPO.ENTRADA_WTG, aero, null);
             } else {
+              // Interno: recuerda la turbina abierta para precargar su salida (palas).
+              setAeroActual(aero);
               void registrar(
                 { tipo: EVENTO_TIPO.ENTRADA_WTG, maquinaId: aero.id },
                 `${etq(EVENTO_TIPO.ENTRADA_WTG)} · ${aero.nombre ?? aero.numero}`,
               );
             }
+          }}
+        />
+      )}
+      {modal === "salida-wtg" && aeroActual && (
+        <ModalSalidaWTG
+          aero={aeroActual}
+          cavidadesPrevias={cavidades[aeroActual.id] ?? []}
+          busy={busy}
+          onCerrar={() => setModal(null)}
+          onConfirmar={(nuevas) => {
+            void registrar(
+              {
+                tipo: EVENTO_TIPO.SALIDA_WTG,
+                maquinaId: aeroActual.id,
+                palas: nuevas,
+              },
+              `${etq(EVENTO_TIPO.SALIDA_WTG)} · ${aeroActual.nombre ?? `WTG ${aeroActual.numero}`}`,
+            ).then((res) => {
+              if (res) setAeroActual(null);
+            });
           }}
         />
       )}
@@ -722,14 +772,24 @@ export function CheckIn({
 
 // ---------- Modales ----------
 
+// Clases de la grilla según el avance de la turbina: gris (sin iniciar),
+// ámbar (parcial/pendiente), verde (completa 6/6). Ninguno bloquea la selección.
+const CLASE_TURBINA: Record<EstadoTurbina, string> = {
+  sin_hacer: "border-iner-green/25 bg-white text-iner-green hover:bg-iner-green-50",
+  parcial: "border-iner-amber bg-iner-amber/25 text-[#7a4e00] hover:bg-iner-amber/35", // pendiente = amarillo
+  completa: "border-iner-ok/40 bg-iner-ok-50 text-iner-ok hover:bg-iner-ok-50/70", // inspeccionada = verde
+};
+
 function ModalAero({
   aeros,
-  inspeccionados,
+  cavidades,
+  leyenda = false, // muestra la leyenda completa/pendiente (solo interna)
   onElegir,
   onCerrar,
 }: {
   aeros: AeroCache[];
-  inspeccionados: Set<string>; // ids ya inspeccionados → fondo verde tenue (no bloquea)
+  cavidades: CavidadesPorAero; // maquina_id → cavidades hechas → tinte de 3 estados
+  leyenda?: boolean;
   onElegir: (a: AeroCache) => void;
   onCerrar: () => void;
 }) {
@@ -763,24 +823,212 @@ function ModalAero({
             onChange={(e) => setQ(e.target.value)}
             inputMode="numeric"
           />
+          {leyenda && (
+            <p className="mb-2 text-center text-[11px] text-iner-gray">
+              <span className="text-iner-ok">■</span> completa ·{" "}
+              <span className="text-[#7a4e00]">■</span> pendiente
+            </p>
+          )}
           <div className="grid max-h-[50vh] grid-cols-3 gap-2 overflow-y-auto">
-            {filtrados.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                onClick={() => onElegir(a)}
-                className={`rounded-lg border px-2 py-3 text-sm font-bold transition ${
-                  inspeccionados.has(a.id)
-                    ? "border-iner-ok/40 bg-iner-ok-50 text-iner-ok hover:bg-iner-ok-50/70" // ya inspeccionada
-                    : "border-iner-green/25 bg-white text-iner-green hover:bg-iner-green-50"
-                }`}
-              >
-                {a.nombre ?? `WTG ${a.numero}`}
-              </button>
-            ))}
+            {filtrados.map((a) => {
+              const cavs = cavidades[a.id] ?? [];
+              const est = estadoTurbina(cavs);
+              const faltan = est === "parcial" ? cavidadesFaltantes(cavs) : [];
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => onElegir(a)}
+                  className={`flex flex-col items-center rounded-lg border px-2 py-3 text-sm font-bold transition ${CLASE_TURBINA[est]}`}
+                >
+                  <span>{a.nombre ?? `WTG ${a.numero}`}</span>
+                  {faltan.length > 0 && (
+                    <span className="mt-0.5 text-[10px] font-medium leading-tight">
+                      falta {faltan.join(", ")}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </>
       )}
+    </Overlay>
+  );
+}
+
+// Modo elegido por pala en el modal de salida. "completa" = hizo todo lo pendiente;
+// un Lado = ese lado faltó (hizo el otro pendiente); "ninguna" = no hizo nada nuevo.
+type ModoPala = "completa" | "ninguna" | Lado;
+
+/** Salida de máquina (interno): confirma qué palas (A/B/C) se completaron. Se tildan
+ *  las palas completas; la pala sin tildar indica qué lado (TEC/LEC) faltó. En un
+ *  reingreso, lo ya hecho (visitas previas / equipo) viene bloqueado y solo se marca
+ *  lo nuevo. Devuelve las cavidades cerradas EN ESTA visita. */
+function ModalSalidaWTG({
+  aero,
+  cavidadesPrevias,
+  busy,
+  onConfirmar,
+  onCerrar,
+}: {
+  aero: AeroCache;
+  cavidadesPrevias: string[];
+  busy: boolean;
+  onConfirmar: (cavidadesNuevas: string[]) => void;
+  onCerrar: () => void;
+}) {
+  // Lados pendientes de cada pala antes de esta visita (lo hecho no se desmarca).
+  const pendientesPorPala = useMemo(
+    () =>
+      Object.fromEntries(
+        PALAS.map((p) => [p, ladosPendientes(p, cavidadesPrevias)]),
+      ) as Record<Pala, Lado[]>,
+    [cavidadesPrevias],
+  );
+  const [modo, setModo] = useState<Record<Pala, ModoPala>>(
+    () => Object.fromEntries(PALAS.map((p) => [p, "ninguna"])) as Record<Pala, ModoPala>,
+  );
+  const setPala = (p: Pala, m: ModoPala) => setModo((cur) => ({ ...cur, [p]: m }));
+
+  // Cavidades cerradas en ESTA visita según el modo elegido por pala.
+  const cavidadesNuevas = useMemo(() => {
+    const out: string[] = [];
+    for (const p of PALAS) {
+      const pend = pendientesPorPala[p];
+      if (pend.length === 0) continue; // ya estaba completa
+      const m = modo[p];
+      if (m === "completa") out.push(...pend.map((l) => `${p}-${l}`));
+      else if (m === "TEC" || m === "LEC") {
+        // Faltó ese lado → se hicieron los demás pendientes.
+        out.push(...pend.filter((l) => l !== m).map((l) => `${p}-${l}`));
+      }
+    }
+    return out;
+  }, [modo, pendientesPorPala]);
+
+  const marcarTodo = () =>
+    setModo(
+      Object.fromEntries(PALAS.map((p) => [p, "completa"])) as Record<Pala, ModoPala>,
+    );
+
+  const previasCompletas = palasCompletas(cavidadesPrevias);
+  const faltaTrasSalida = cavidadesFaltantes([...cavidadesPrevias, ...cavidadesNuevas]);
+  const quedaCompleta = faltaTrasSalida.length === 0;
+
+  return (
+    <Overlay>
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="text-base font-bold">
+          Confirmar salida · {aero.nombre ?? `WTG ${aero.numero}`}
+        </h2>
+        <button type="button" onClick={onCerrar} className="text-sm text-iner-gray">
+          Cancelar
+        </button>
+      </div>
+      {previasCompletas.length > 0 && (
+        <p className="mb-2 rounded-lg border border-iner-ok/30 bg-iner-ok-50 px-3 py-2 text-xs text-iner-ok">
+          Reingreso: pala{previasCompletas.length > 1 ? "s" : ""}{" "}
+          {previasCompletas.join(", ")} ya inspeccionada
+          {previasCompletas.length > 1 ? "s" : ""}. Completá lo que falta.
+        </p>
+      )}
+      <p className="mb-3 text-sm text-iner-gray">Tocá las palas que completaste.</p>
+
+      <button
+        type="button"
+        onClick={marcarTodo}
+        className="mb-3 w-full rounded-lg border border-iner-green/25 bg-iner-green-50 px-3 py-2 text-sm font-bold text-iner-green transition hover:bg-iner-green-100"
+      >
+        Las 3 palas completas
+      </button>
+
+      <div className="space-y-2">
+        {PALAS.map((p) => {
+          const pend = pendientesPorPala[p];
+          const m = modo[p];
+          if (pend.length === 0) {
+            return (
+              <div
+                key={p}
+                className="flex items-center gap-2 rounded-xl border border-iner-ok/40 bg-iner-ok-50 px-3 py-3 text-sm font-bold text-iner-ok"
+              >
+                Pala {p} · ya inspeccionada ✓
+              </div>
+            );
+          }
+          const completa = m === "completa";
+          return (
+            <div key={p} className="rounded-xl border border-black/10 bg-white p-3">
+              <button
+                type="button"
+                onClick={() => setPala(p, completa ? "ninguna" : "completa")}
+                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-bold transition ${
+                  completa
+                    ? "bg-iner-ok-50 text-iner-ok"
+                    : "bg-iner-gray-100 text-foreground hover:bg-iner-gray-100/70"
+                }`}
+              >
+                <span>Pala {p}</span>
+                <span>{completa ? "✓ completa" : "marcar completa"}</span>
+              </button>
+              {!completa && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-iner-gray">¿qué faltó?</span>
+                  {pend.map((l) => (
+                    <button
+                      key={l}
+                      type="button"
+                      onClick={() => setPala(p, m === l ? "ninguna" : l)}
+                      className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                        m === l
+                          ? "border-iner-amber bg-iner-amber-50 text-[#9a6200]"
+                          : "border-black/15 bg-white text-iner-gray hover:bg-iner-gray-100"
+                      }`}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                  {pend.length === 2 && (
+                    <button
+                      type="button"
+                      onClick={() => setPala(p, "ninguna")}
+                      className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                        m === "ninguna"
+                          ? "border-iner-amber bg-iner-amber-50 text-[#9a6200]"
+                          : "border-black/15 bg-white text-iner-gray hover:bg-iner-gray-100"
+                      }`}
+                    >
+                      las dos
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <p
+        className={`mt-3 rounded-lg px-3 py-2 text-center text-xs font-semibold ${
+          quedaCompleta
+            ? "bg-iner-ok-50 text-iner-ok"
+            : "bg-iner-amber-50 text-[#9a6200]"
+        }`}
+      >
+        {quedaCompleta
+          ? "La turbina queda completa (A · B · C)."
+          : `Queda pendiente: ${faltaTrasSalida.join(", ")}`}
+      </p>
+
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => onConfirmar(cavidadesNuevas)}
+        className="btn-primary mt-3 w-full disabled:opacity-40"
+      >
+        Confirmar salida
+      </button>
     </Overlay>
   );
 }

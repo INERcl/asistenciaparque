@@ -30,7 +30,8 @@ import { guardarAsignacion, leerAsignacion, leerPerfil } from "./sesion";
 
 export interface RegistrarEventoInput {
   tipo: EventoTipo;
-  maquinaId?: string; // requerido en entrada_wtg
+  maquinaId?: string; // requerido en entrada_wtg; también en salida_wtg del interno
+  palas?: string[]; // cavidades cerradas en esta salida (interno). undefined = turbina entera
   motivo?: StandbyMotivo; // requerido en inicio_standby
   motivoOtro?: string; // texto si motivo = otros
   comentario?: string;
@@ -104,6 +105,7 @@ export async function registrarEvento(
       categoria: categoriaDeEvento(input.tipo),
       ts_dispositivo: ts,
       maquina_id: input.maquinaId ?? null,
+      palas: input.palas ?? null,
       motivo: input.motivo ?? null,
       motivo_otro: input.motivoOtro ?? null,
       comentario: input.comentario ?? null,
@@ -121,21 +123,27 @@ export async function registrarEvento(
     tipo: input.tipo,
     ts,
     maquinaId: input.maquinaId ?? null,
+    palas: input.palas ?? null,
     motivo: input.motivo ?? null,
     motivoOtro: input.motivoOtro ?? null,
   });
 
-  // Acumulado de inspeccionados (resumen del externo): el STOP abre el aero; el
-  // RUN o un cierre con el aero abierto lo acreditan (criterio de `visitas_aero`).
+  // Acumulado de inspeccionados por cavidad: la subida abre el aero; la salida lo
+  // acredita con las cavidades hechas (interno) o entero (externo/legado). Un cierre
+  // de día/parque con el aero abierto lo cuenta entero (caso del externo: STOP sin RUN;
+  // el interno resuelve la turbina con ModalSalidaWTG antes de cerrar).
   if (input.tipo === EVENTO_TIPO.ENTRADA_WTG) {
     await guardarAeroActual(jornadaId, input.maquinaId ?? null);
+  } else if (input.tipo === EVENTO_TIPO.SALIDA_WTG) {
+    const maq = input.maquinaId ?? (await leerAeroActual(jornadaId));
+    if (maq) await agregarInspeccionado(asignacion.id, maq, input.palas);
+    await guardarAeroActual(jornadaId, null);
   } else if (
-    input.tipo === EVENTO_TIPO.SALIDA_WTG ||
     input.tipo === EVENTO_TIPO.SALIDA_PARQUE ||
     input.tipo === EVENTO_TIPO.FINALIZAR_PARQUE
   ) {
     const aeroAbierto = await leerAeroActual(jornadaId);
-    if (aeroAbierto) await agregarInspeccionado(asignacion.id, aeroAbierto);
+    if (aeroAbierto) await agregarInspeccionado(asignacion.id, aeroAbierto); // entero
     await guardarAeroActual(jornadaId, null);
   }
 

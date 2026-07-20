@@ -38,6 +38,63 @@ export const EVENTOS_TERMINALES: EventoTipo[] = [
 // Eventos que piden número de aerogenerador al registrarse.
 export const EVENTOS_CON_MAQUINA = [EVENTO_TIPO.ENTRADA_WTG];
 
+// =====================================================================
+// Inspección interna por palas. Cada aerogenerador tiene 3 palas (A, B, C) y
+// cada pala 2 lados/cavidades: TEC y LEC → 6 cavidades por turbina. El operador
+// interno piensa "por pala", pero cuando una pala queda a medias se registra qué
+// lado (TEC/LEC) faltó; por eso el dato se guarda por cavidad (eventos.palas). Una
+// turbina está COMPLETA cuando se cubren sus 6 cavidades, uniendo TODAS las visitas
+// del equipo/técnico en ese parque. Ver ModalSalidaWTG y 0021_vistas_palas.sql.
+// =====================================================================
+export const PALAS = ["A", "B", "C"] as const;
+export type Pala = (typeof PALAS)[number];
+
+export const LADOS = ["TEC", "LEC"] as const;
+export type Lado = (typeof LADOS)[number];
+
+export type Cavidad = `${Pala}-${Lado}`;
+/** Las 6 cavidades de un aerogenerador en orden canónico: A-TEC, A-LEC, B-TEC, … */
+export const CAVIDADES: Cavidad[] = PALAS.flatMap((p) =>
+  LADOS.map((l) => `${p}-${l}` as Cavidad),
+);
+export const CAVIDADES_POR_TURBINA = CAVIDADES.length; // 6
+
+export type EstadoTurbina = "sin_hacer" | "parcial" | "completa";
+
+/** Estado de una turbina según sus cavidades ya inspeccionadas (acumuladas). */
+export function estadoTurbina(
+  cavidades: readonly string[] | undefined | null,
+): EstadoTurbina {
+  const n = new Set(cavidades ?? []).size;
+  if (n === 0) return "sin_hacer";
+  return n >= CAVIDADES_POR_TURBINA ? "completa" : "parcial";
+}
+
+/** Cavidades que faltan para completar la turbina (en orden canónico). */
+export function cavidadesFaltantes(
+  cavidades: readonly string[] | undefined | null,
+): Cavidad[] {
+  const hechas = new Set(cavidades ?? []);
+  return CAVIDADES.filter((c) => !hechas.has(c));
+}
+
+/** Lados de una pala aún pendientes dadas las cavidades ya hechas. */
+export function ladosPendientes(
+  pala: Pala,
+  cavidades: readonly string[] | undefined | null,
+): Lado[] {
+  const hechas = new Set(cavidades ?? []);
+  return LADOS.filter((l) => !hechas.has(`${pala}-${l}`));
+}
+
+/** Palas con sus dos lados ya inspeccionados. */
+export function palasCompletas(
+  cavidades: readonly string[] | undefined | null,
+): Pala[] {
+  const hechas = new Set(cavidades ?? []);
+  return PALAS.filter((p) => LADOS.every((l) => hechas.has(`${p}-${l}`)));
+}
+
 export const CATEGORIA = {
   PRODUCTIVO: "productivo",
   TRASLADO: "traslado",

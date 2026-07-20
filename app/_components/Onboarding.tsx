@@ -65,11 +65,11 @@ export function Onboarding({
         lat: p.lat ?? null,
         lon: p.lon ?? null,
       });
-      // Siembra el acumulado de inspeccionados (resumen del externo) desde el
-      // server: cubre dispositivo nuevo o cache borrado con asignación en curso.
+      // Siembra el acumulado de cavidades inspeccionadas desde el server: cubre
+      // dispositivo nuevo o cache borrado con asignación en curso.
       const { data: evs } = await supabase
         .from("eventos")
-        .select("tipo, maquina_id, ts_dispositivo, jornada_id, jornadas!inner(asignacion_id)")
+        .select("tipo, maquina_id, palas, ts_dispositivo, jornada_id, jornadas!inner(asignacion_id)")
         .eq("jornadas.asignacion_id", a.id)
         .in("tipo", ["entrada_wtg", "salida_wtg", "salida_parque", "finalizar_parque"])
         .order("ts_dispositivo");

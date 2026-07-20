@@ -7,6 +7,8 @@ import {
   STANDBY_MOTIVO,
   STANDBY_MOTIVO_LABEL,
   type StandbyMotivo,
+  cavidadesFaltantes,
+  palasCompletas,
 } from "./catalogos";
 
 /** Mensaje de evidencia del evento para compartir por WhatsApp junto a la foto.
@@ -113,6 +115,7 @@ export interface EventoResumen {
   ts: string; // ISO 8601 local del parque
   maquinaId?: string | null;
   numero?: number | null; // WTG, si viene embebido (Supabase); si no, lo resuelve resolverWtg
+  palas?: string[] | null; // cavidades cerradas en la salida (interno); null = turbina entera
   motivo?: StandbyMotivo | string | null;
   motivoOtro?: string | null;
 }
@@ -220,6 +223,7 @@ export interface TurbinaInterna {
   traslado: string; // HH:MM o "—" (el traslado_maquina previo a la subida)
   subida: string; // HH:MM
   salida: string; // HH:MM o "—"
+  palas?: string[] | null; // cavidades cerradas en esta visita; null = turbina entera
 }
 export interface StandbyInterno {
   motivo: string; // etiqueta llana (ej. "Viento bajo")
@@ -295,6 +299,7 @@ export function resumenInternoDesdeEventos(
         traslado: ultimoTraslado ?? SIN_HORA,
         subida: hhmm(e.ts),
         salida: cierra ? hhmm(sig.ts) : SIN_HORA,
+        palas: cierra && sig.tipo === EVENTO_TIPO.SALIDA_WTG ? (sig.palas ?? null) : null,
       });
       ultimoTraslado = null; // el traslado aplica a una sola subida
     } else if (e.tipo === EVENTO_TIPO.INICIO_STANDBY) {
@@ -313,6 +318,18 @@ export function resumenInternoDesdeEventos(
   return { ...meta, llegada, turbinas, standbys, salida };
 }
 
+/** Resumen legible de las palas de una turbina: "completo (A · B · C)" o, si quedó
+ *  parcial, las palas completas y las cavidades que faltan (ej. "A ✓ · falta B-LEC, C-TEC"). */
+function textoPalas(palas: string[]): string {
+  const faltan = cavidadesFaltantes(palas);
+  if (faltan.length === 0) return "completo (A · B · C)";
+  const completas = palasCompletas(palas);
+  const partes: string[] = [];
+  if (completas.length) partes.push(`${completas.join(", ")} ✓`);
+  partes.push(`falta ${faltan.join(", ")}`);
+  return partes.join(" · ");
+}
+
 /** Texto copiable del resumen de la jornada interna (formato acordado con el equipo). */
 export function textoResumenInterno(d: ResumenInterno): string {
   const lineas: string[] = [
@@ -329,6 +346,7 @@ export function textoResumenInterno(d: ResumenInterno): string {
       `Subida: ${t.subida}`,
       `Salida: ${t.salida}`,
     );
+    if (t.palas != null) lineas.push(`Palas: ${textoPalas(t.palas)}`);
   }
   if (d.standbys.length > 0) {
     lineas.push(SEP);
