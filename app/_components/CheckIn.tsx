@@ -337,6 +337,7 @@ export function CheckIn({
       {
         tipo,
         maquinaId: esStop ? aero.id : undefined,
+        aeroNumero: aero.numero,
         foto: foto ?? undefined,
       },
       `${etq(tipo)} · ${aero.nombre ?? `WTG ${aero.numero}`}`,

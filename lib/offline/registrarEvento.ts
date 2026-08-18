@@ -31,6 +31,7 @@ import { guardarAsignacion, leerAsignacion, leerPerfil } from "./sesion";
 export interface RegistrarEventoInput {
   tipo: EventoTipo;
   maquinaId?: string; // requerido en entrada_wtg; también en salida_wtg del interno
+  aeroNumero?: number; // número visible de la turbina (para nombrar la foto de evidencia)
   palas?: string[]; // cavidades cerradas en esta salida (interno). undefined = turbina entera
   motivo?: StandbyMotivo; // requerido en inicio_standby
   motivoOtro?: string; // texto si motivo = otros
@@ -93,7 +94,13 @@ export async function registrarEvento(
   }
 
   const id = crypto.randomUUID();
-  const fotoPath = input.foto ? `${perfil.id}/${id}.jpg` : null;
+  // Nombre legible por turbina+jornada (ej. "wtg39stop.jpg"/"wtg39run.jpg"): la
+  // carpeta por fecha evita que una reinspección el mismo día u otra jornada
+  // pise la foto anterior de la misma turbina.
+  const tipoFoto = input.tipo === EVENTO_TIPO.ENTRADA_WTG ? "stop" : "run";
+  const fotoPath = input.foto
+    ? `${perfil.id}/${fecha}/wtg${input.aeroNumero ?? "s"}${tipoFoto}.jpg`
+    : null;
   await encolar({
     id,
     tabla: "eventos",
