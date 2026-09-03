@@ -27,6 +27,7 @@ import {
   botonesDe,
   cavidadesFaltantes,
   climaMotivosDe,
+  esSiemensGamesa,
   estadoTurbina,
   labelEvento,
   ladosPendientes,
@@ -62,6 +63,10 @@ import {
   sembrarInspeccionados,
 } from "@/lib/offline/inspeccionados";
 import { leerEventosDetalle } from "@/lib/offline/detalleJornada";
+import {
+  guardarTecnicoAcompanante,
+  leerTecnicoAcompanante,
+} from "@/lib/offline/tecnicoAcompanante";
 import {
   type AeroCache,
   type AsignacionCache,
@@ -134,7 +139,8 @@ type Modal =
   | "retiro-standby"
   | "finalizar"
   | "cancelar"
-  | "logout";
+  | "logout"
+  | "tecnico-acompanante";
 
 // Evidencia registrada lista para compartir por WhatsApp.
 interface Compartible {
@@ -157,6 +163,9 @@ export function CheckIn({
   const [asignacion, setAsignacion] = useState<AsignacionCache | null>(null);
   const [subtipo, setSubtipo] = useState<Subtipo | null>(null);
   const [nombreTecnico, setNombreTecnico] = useState<string | null>(null);
+  const [empresaId, setEmpresaId] = useState<string | null>(null);
+  const [tecnicoAcompanante, setTecnicoAcompanante] = useState<string | null>(null);
+  const [pendingAero, setPendingAero] = useState<AeroCache | null>(null);
   const [verClima, setVerClima] = useState(false); // flag piloto del perfil
   const [paisConfig, setPaisConfig] = useState<PaisConfig>(PAIS_CONFIG_DEFAULT);
   const [aeros, setAeros] = useState<AeroCache[]>([]);
@@ -187,6 +196,7 @@ export function CheckIn({
       setAsignacion(a ?? null);
       setSubtipo(perfil?.subtipo ?? null);
       setNombreTecnico(perfil?.nombre ?? null);
+      setEmpresaId(perfil?.empresa_id ?? null);
       setVerClima(perfil?.ver_clima ?? false);
       setPaisConfig(paisConfigDe(a?.pais ?? perfil?.pais, cfg));
       // Refresca los nombres del equipo (resumen interno) con red, sin depender
@@ -198,6 +208,7 @@ export function CheckIn({
         const jornadaId = `${a.id}_${fechaHoy(a.tz)}`;
         setEstado(estadoDesdeEventos(await getTiposJornada(jornadaId)));
         setCavidades(await leerInspeccionados(a.id));
+        setTecnicoAcompanante(await leerTecnicoAcompanante(jornadaId));
         // Verde compartido: siembra las cavidades que el equipo/técnico YA
         // inspeccionó en ESTE parque (otras asignaciones / histórico), para retomar
         // parciales y no re-inspeccionar. La RLS de equipo (0011/0012) acota lo visible.
@@ -331,6 +342,7 @@ export function CheckIn({
     tipo: EventoTipo,
     aero: AeroCache,
     foto: Blob | null,
+    tecnico: string | null = tecnicoAcompanante,
   ) {
     const esStop = tipo === EVENTO_TIPO.ENTRADA_WTG;
     const res = await registrar(
@@ -339,6 +351,7 @@ export function CheckIn({
         maquinaId: esStop ? aero.id : undefined,
         aeroNumero: aero.numero,
         foto: foto ?? undefined,
+        tecnicoAcompanante: esStop ? (tecnico ?? undefined) : undefined,
       },
       `${etq(tipo)} · ${aero.nombre ?? `WTG ${aero.numero}`}`,
     );
@@ -358,6 +371,42 @@ export function CheckIn({
         nombreArchivo: `${esStop ? "stop" : "run"}-wtg-${aero.numero}.jpg`,
       });
     }
+  }
+
+  /** Rama de entrada a turbina (STOP/subida) ya resuelta el técnico acompañante
+   *  (si aplica). `tecnico` explícito evita depender del estado recién seteado
+   *  (posible closure vieja si se llama justo después de guardarlo). */
+  function elegirAero(aero: AeroCache, tecnico: string | null = tecnicoAcompanante) {
+    if (externoConFoto) {
+      setAeroElegido(aero);
+      setModal("evidencia-stop");
+    } else if (externo) {
+      void registrarConEvidencia(EVENTO_TIPO.ENTRADA_WTG, aero, null, tecnico);
+    } else {
+      setAeroActual(aero);
+      void registrar(
+        {
+          tipo: EVENTO_TIPO.ENTRADA_WTG,
+          maquinaId: aero.id,
+          tecnicoAcompanante: tecnico ?? undefined,
+        },
+        `${etq(EVENTO_TIPO.ENTRADA_WTG)} · ${aero.nombre ?? aero.numero}`,
+      );
+    }
+  }
+
+  /** Guarda el técnico acompañante de la jornada (Siemens Gamesa). Si venía de
+   *  elegir una turbina (pendingAero), continúa ese registro; si fue editado
+   *  tocando la línea "Técnico acompañante: …", solo actualiza el valor. */
+  async function confirmarTecnicoAcompanante(nombre: string) {
+    if (!asignacion) return;
+    const jornadaId = `${asignacion.id}_${fechaHoy(asignacion.tz)}`;
+    await guardarTecnicoAcompanante(jornadaId, nombre);
+    setTecnicoAcompanante(nombre);
+    setModal(null);
+    const aero = pendingAero;
+    setPendingAero(null);
+    if (aero) elegirAero(aero, nombre);
   }
 
   async function cerrarSesion() {
@@ -415,6 +464,10 @@ export function CheckIn({
   // Siemens en Argentina, vía parques.foto_evidencia). Argentina/Naretto: directo.
   const externoConFoto =
     externo && (usaFotoEvidencia(asignacion?.pais) || (asignacion?.foto_evidencia ?? false));
+  // Siemens Gamesa (AR/CL): requiere técnico de apoyo por turbina. Ver
+  // tecnico_acompanante en registrarEvento.ts y la línea que reemplaza a
+  // "¿Parque equivocado?" más abajo.
+  const requiereTecnico = externo && esSiemensGamesa(empresaId);
 
   return (
     <main className="mx-auto flex min-h-full w-full max-w-md flex-1 flex-col">
@@ -499,15 +552,27 @@ export function CheckIn({
             Registrá <strong>{etq(EVENTO_TIPO.SALIDA_WTG)}</strong> para cerrar el aero.
           </p>
         )}
-        {!estado.enParque && !estado.diaCerrado && (
+        {requiereTecnico && tecnicoAcompanante ? (
           <button
             type="button"
             disabled={busy}
-            onClick={() => setModal("cancelar")}
+            onClick={() => setModal("tecnico-acompanante")}
             className="-mt-1 w-full text-center text-xs text-iner-gray underline disabled:opacity-40"
           >
-            ¿Parque equivocado? Cambiar de parque
+            Técnico acompañante: {tecnicoAcompanante}
           </button>
+        ) : (
+          !estado.enParque &&
+          !estado.diaCerrado && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setModal("cancelar")}
+              className="-mt-1 w-full text-center text-xs text-iner-gray underline disabled:opacity-40"
+            >
+              ¿Parque equivocado? Cambiar de parque
+            </button>
+          )
         )}
 
         {/* Acciones directas */}
@@ -596,21 +661,14 @@ export function CheckIn({
           leyenda={!externo}
           onCerrar={() => setModal(null)}
           onElegir={(aero) => {
-            if (externoConFoto) {
-              // El STOP del externo con foto lleva evidencia antes de registrar.
-              setAeroElegido(aero);
-              setModal("evidencia-stop");
-            } else if (externo) {
-              // Externo sin foto (Argentina): registra el STOP directo.
-              void registrarConEvidencia(EVENTO_TIPO.ENTRADA_WTG, aero, null);
-            } else {
-              // Interno: recuerda la turbina abierta para precargar su salida (palas).
-              setAeroActual(aero);
-              void registrar(
-                { tipo: EVENTO_TIPO.ENTRADA_WTG, maquinaId: aero.id },
-                `${etq(EVENTO_TIPO.ENTRADA_WTG)} · ${aero.nombre ?? aero.numero}`,
-              );
+            // Siemens Gamesa: si todavía no hay técnico acompañante para hoy, se
+            // pregunta antes de registrar la entrada a esta turbina.
+            if (requiereTecnico && !tecnicoAcompanante) {
+              setPendingAero(aero);
+              setModal("tecnico-acompanante");
+              return;
             }
+            elegirAero(aero);
           }}
         />
       )}
@@ -674,6 +732,18 @@ export function CheckIn({
               }`,
             )
           }
+        />
+      )}
+      {modal === "tecnico-acompanante" && (
+        <ModalTecnicoAcompanante
+          valorActual={tecnicoAcompanante}
+          busy={busy}
+          onConfirmar={(nombre) => void confirmarTecnicoAcompanante(nombre)}
+          onSinTecnico={() => void confirmarTecnicoAcompanante("Sin técnico")}
+          onCerrar={() => {
+            setPendingAero(null);
+            setModal(null);
+          }}
         />
       )}
       {modal === "salida-opciones" && (
@@ -1298,6 +1368,66 @@ function ModalStandby({
       >
         {textoOk}
       </button>
+    </Overlay>
+  );
+}
+
+/** Nombre del técnico de apoyo Siemens (o "Sin técnico"). Se abre al iniciar la
+ *  primera turbina del día (Siemens Gamesa) y, luego, al tocar la línea
+ *  "Técnico acompañante: …" para editarlo. */
+function ModalTecnicoAcompanante({
+  valorActual,
+  busy,
+  onConfirmar,
+  onSinTecnico,
+  onCerrar,
+}: {
+  valorActual: string | null;
+  busy: boolean;
+  onConfirmar: (nombre: string) => void;
+  onSinTecnico: () => void;
+  onCerrar: () => void;
+}) {
+  const [nombre, setNombre] = useState(valorActual ?? "");
+
+  return (
+    <Overlay>
+      <h2 className="text-base font-bold">Técnico acompañante</h2>
+      <p className="mt-2 text-sm text-iner-gray">
+        Indicá el nombre del técnico de Siemens que te acompaña en esta turbina.
+      </p>
+      <input
+        className="campo mt-3"
+        placeholder="Nombre del técnico…"
+        value={nombre}
+        onChange={(e) => setNombre(e.target.value)}
+        autoFocus
+      />
+      <div className="mt-4 space-y-2">
+        <button
+          type="button"
+          disabled={busy || nombre.trim().length === 0}
+          onClick={() => onConfirmar(nombre.trim())}
+          className="btn-primary w-full disabled:opacity-40"
+        >
+          Guardar
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onSinTecnico}
+          className="w-full rounded-lg border border-iner-amber bg-iner-amber px-4 py-3 text-sm font-bold text-white transition hover:bg-iner-amber/90 disabled:opacity-40"
+        >
+          Sin Técnico
+        </button>
+        <button
+          type="button"
+          onClick={onCerrar}
+          className="w-full py-1 text-center text-sm text-iner-gray"
+        >
+          Cancelar
+        </button>
+      </div>
     </Overlay>
   );
 }

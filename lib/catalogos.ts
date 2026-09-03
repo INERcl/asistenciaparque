@@ -269,6 +269,15 @@ export function usaFotoEvidencia(pais: Pais | null | undefined): boolean {
   return pais !== PAIS.ARGENTINA;
 }
 
+// Empresas Siemens Gamesa (AR y CL) — sus operadores requieren un técnico de
+// apoyo de Siemens presente en cada turbina. Ver "Técnico acompañante" en
+// CheckIn.tsx y eventos.tecnico_acompanante (0032_tecnico_acompanante.sql).
+const SIEMENS_GAMESA_EMPRESAS = ["siemens_gamesa_argentina", "siemens_gamesa_chile"];
+
+export function esSiemensGamesa(empresaId: string | null | undefined): boolean {
+  return !!empresaId && SIEMENS_GAMESA_EMPRESAS.includes(empresaId);
+}
+
 export const PAISES = [
   { id: PAIS.ARGENTINA, label: "Argentina" },
   { id: PAIS.CHILE, label: "Chile" },

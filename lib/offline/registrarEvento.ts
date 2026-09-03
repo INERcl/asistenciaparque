@@ -38,6 +38,7 @@ export interface RegistrarEventoInput {
   comentario?: string;
   foto?: Blob; // evidencia JPEG ya comprimida (STOP/RUN del externo)
   tsOverride?: string; // ISO a usar en vez de "ahora" (ej. fin_standby/salida a las 17:00)
+  tecnicoAcompanante?: string; // técnico de apoyo Siemens (ver esSiemensGamesa)
 }
 
 interface JornadaActiva {
@@ -117,6 +118,7 @@ export async function registrarEvento(
       motivo_otro: input.motivoOtro ?? null,
       comentario: input.comentario ?? null,
       foto_path: fotoPath,
+      tecnico_acompanante: input.tecnicoAcompanante ?? null,
     },
   });
   if (input.foto && fotoPath) {
@@ -133,6 +135,7 @@ export async function registrarEvento(
     palas: input.palas ?? null,
     motivo: input.motivo ?? null,
     motivoOtro: input.motivoOtro ?? null,
+    tecnicoAcompanante: input.tecnicoAcompanante ?? null,
   });
 
   // Acumulado de inspeccionados por cavidad: la subida abre el aero; la salida lo
@@ -243,4 +246,5 @@ async function finalizarAsignacion(
   await limpiarDetalle();
   await limpiarInspeccionados(asignacion.id);
   await cacheSet("sesion", "aero_actual", null);
+  await cacheSet("sesion", "tecnico_acompanante", null);
 }

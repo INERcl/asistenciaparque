@@ -118,12 +118,15 @@ export interface EventoResumen {
   palas?: string[] | null; // cavidades cerradas en la salida (interno); null = turbina entera
   motivo?: StandbyMotivo | string | null;
   motivoOtro?: string | null;
+  tecnicoAcompanante?: string | null; // técnico de apoyo Siemens (entrada_wtg)
 }
 
 export interface TurbinaResumen {
   wtg: number | null;
   stop: string; // HH:MM
   run: string; // HH:MM o "—"
+  tecnicoAcompanante?: string | null; // técnico de apoyo Siemens (si aplica)
+  standbys: StandbyResumen[]; // stand-bys ocurridos DENTRO de esta turbina (STOP→cierre)
 }
 export interface StandbyResumen {
   etiqueta: string;
@@ -149,10 +152,15 @@ const CIERRAN_AERO: (EventoTipo | string)[] = [
 /** Cierre real de la turbina abierta en `desdeIndice`: busca hacia adelante saltando
  *  cualquier stand-by intercalado (la máquina de estados no permite otro entrada_wtg
  *  en el medio, solo pares inicio/fin de stand-by) hasta el salida_wtg/salida_parque/
- *  finalizar_parque real. Sin esto, un stand-by a mitad de turbina "tapaba" el RUN. */
-function cierreDeAero(orden: EventoResumen[], desdeIndice: number): EventoResumen | null {
+ *  finalizar_parque real. Sin esto, un stand-by a mitad de turbina "tapaba" el RUN.
+ *  Devuelve también el índice del cierre, para poder ubicar qué stand-bys quedaron
+ *  DENTRO de esa ventana (entre el STOP y el cierre) y mostrarlos junto a la turbina. */
+function cierreDeAero(
+  orden: EventoResumen[],
+  desdeIndice: number,
+): { evento: EventoResumen; indice: number } | null {
   for (let j = desdeIndice; j < orden.length; j++) {
-    if (CIERRAN_AERO.includes(orden[j].tipo)) return orden[j];
+    if (CIERRAN_AERO.includes(orden[j].tipo)) return { evento: orden[j], indice: j };
   }
   return null;
 }
@@ -179,7 +187,10 @@ export function resumenJornadaDesdeEventos(
 ): ResumenJornada {
   const orden = [...eventos].sort((a, b) => a.ts.localeCompare(b.ts));
   const turbinas: TurbinaResumen[] = [];
-  const standbys: StandbyResumen[] = [];
+  const standbys: StandbyResumen[] = []; // stand-bys sueltos (fuera de cualquier turbina)
+  // Ventanas [entradaIdx, cierreIdx) abiertas, para ubicar qué stand-by cae DENTRO
+  // de cuál turbina (ver cierreDeAero).
+  const ventanas: { entradaIdx: number; cierreIdx: number; turbina: TurbinaResumen }[] = [];
   let salida: string | null = null;
 
   for (let i = 0; i < orden.length; i++) {
@@ -188,13 +199,24 @@ export function resumenJornadaDesdeEventos(
     if (e.tipo === EVENTO_TIPO.ENTRADA_WTG) {
       const cierre = cierreDeAero(orden, i + 1);
       const wtg = e.numero ?? resolverWtg?.(e.maquinaId) ?? null;
-      turbinas.push({ wtg, stop: hhmm(e.ts), run: cierre ? hhmm(cierre.ts) : SIN_HORA });
+      const turbina: TurbinaResumen = {
+        wtg,
+        stop: hhmm(e.ts),
+        run: cierre ? hhmm(cierre.evento.ts) : SIN_HORA,
+        tecnicoAcompanante: e.tecnicoAcompanante ?? null,
+        standbys: [],
+      };
+      turbinas.push(turbina);
+      if (cierre) ventanas.push({ entradaIdx: i, cierreIdx: cierre.indice, turbina });
     } else if (e.tipo === EVENTO_TIPO.INICIO_STANDBY) {
-      standbys.push({
+      const item: StandbyResumen = {
         etiqueta: etiquetaStandby(e.motivo, e.motivoOtro),
         inicio: hhmm(e.ts),
         fin: sig != null ? hhmm(sig.ts) : SIN_HORA,
-      });
+      };
+      const ventana = ventanas.find((v) => v.entradaIdx < i && i < v.cierreIdx);
+      if (ventana) ventana.turbina.standbys.push(item);
+      else standbys.push(item);
     } else if (
       e.tipo === EVENTO_TIPO.SALIDA_PARQUE ||
       e.tipo === EVENTO_TIPO.FINALIZAR_PARQUE
@@ -216,6 +238,21 @@ export function textoResumenJornada(d: ResumenJornada): string {
   ];
   for (const t of d.turbinas) {
     lineas.push(`${t.wtg != null ? `WTG ${t.wtg}` : "WTG —"}: STOP: ${t.stop} - RUN: ${t.run}`);
+    if (t.tecnicoAcompanante) lineas.push(`Técnico acompañante: ${t.tecnicoAcompanante}`);
+  }
+  // Sección aparte con todos los stand-by del día: los de una turbina llevan su
+  // WTG; los sueltos (fuera de cualquier ventana STOP→RUN) van solo con el motivo.
+  const hayStandby = d.turbinas.some((t) => t.standbys.length > 0) || d.standbys.length > 0;
+  if (hayStandby) {
+    lineas.push("Stand-By:");
+    for (const t of d.turbinas) {
+      for (const s of t.standbys) {
+        lineas.push(`WTG ${t.wtg ?? "—"} ${s.etiqueta}`);
+      }
+    }
+    for (const s of d.standbys) {
+      lineas.push(s.etiqueta);
+    }
   }
   if (d.salida) lineas.push(`Salida del parque: ${d.salida}`);
   lineas.push(`Fecha: ${d.fecha}`);
@@ -232,6 +269,7 @@ export interface TurbinaInterna {
   subida: string; // HH:MM
   salida: string; // HH:MM o "—"
   palas?: string[] | null; // cavidades cerradas en esta visita; null = turbina entera
+  standbys: StandbyInterno[]; // stand-bys ocurridos DENTRO de esta turbina (subida→cierre)
 }
 export interface StandbyInterno {
   motivo: string; // etiqueta llana (ej. "Viento bajo")
@@ -287,7 +325,8 @@ export function resumenInternoDesdeEventos(
 ): ResumenInterno {
   const orden = [...eventos].sort((a, b) => a.ts.localeCompare(b.ts));
   const turbinas: TurbinaInterna[] = [];
-  const standbys: StandbyInterno[] = [];
+  const standbys: StandbyInterno[] = []; // stand-bys sueltos (fuera de cualquier turbina)
+  const ventanas: { entradaIdx: number; cierreIdx: number; turbina: TurbinaInterna }[] = [];
   let llegada: string | null = null;
   let salida: string | null = null;
   let ultimoTraslado: string | null = null;
@@ -302,20 +341,26 @@ export function resumenInternoDesdeEventos(
     } else if (e.tipo === EVENTO_TIPO.ENTRADA_WTG) {
       const cierre = cierreDeAero(orden, i + 1);
       const wtg = e.numero ?? resolverWtg?.(e.maquinaId) ?? null;
-      turbinas.push({
+      const turbina: TurbinaInterna = {
         wtg,
         traslado: ultimoTraslado ?? SIN_HORA,
         subida: hhmm(e.ts),
-        salida: cierre ? hhmm(cierre.ts) : SIN_HORA,
-        palas: cierre?.tipo === EVENTO_TIPO.SALIDA_WTG ? (cierre.palas ?? null) : null,
-      });
+        salida: cierre ? hhmm(cierre.evento.ts) : SIN_HORA,
+        palas: cierre?.evento.tipo === EVENTO_TIPO.SALIDA_WTG ? (cierre.evento.palas ?? null) : null,
+        standbys: [],
+      };
+      turbinas.push(turbina);
+      if (cierre) ventanas.push({ entradaIdx: i, cierreIdx: cierre.indice, turbina });
       ultimoTraslado = null; // el traslado aplica a una sola subida
     } else if (e.tipo === EVENTO_TIPO.INICIO_STANDBY) {
-      standbys.push({
+      const item: StandbyInterno = {
         motivo: motivoStandbyPlano(e.motivo, e.motivoOtro),
         inicio: hhmm(e.ts),
         fin: sig != null ? hhmm(sig.ts) : SIN_HORA,
-      });
+      };
+      const ventana = ventanas.find((v) => v.entradaIdx < i && i < v.cierreIdx);
+      if (ventana) ventana.turbina.standbys.push(item);
+      else standbys.push(item);
     } else if (
       e.tipo === EVENTO_TIPO.SALIDA_PARQUE ||
       e.tipo === EVENTO_TIPO.FINALIZAR_PARQUE
@@ -355,6 +400,18 @@ export function textoResumenInterno(d: ResumenInterno): string {
       `Salida: ${t.salida}`,
     );
     if (t.palas != null) lineas.push(`Palas: ${textoPalas(t.palas)}`);
+  }
+  const hayStandby = d.turbinas.some((t) => t.standbys.length > 0) || d.standbys.length > 0;
+  if (hayStandby) {
+    lineas.push("Stand-By:");
+    for (const t of d.turbinas) {
+      for (const s of t.standbys) {
+        lineas.push(`WTG ${t.wtg ?? "—"} ${s.motivo}`);
+      }
+    }
+    for (const s of d.standbys) {
+      lineas.push(s.motivo);
+    }
   }
   if (d.salida) lineas.push(SEP, `Salida de Parque: ${d.salida}`);
   return lineas.join("\n");
