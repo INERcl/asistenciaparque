@@ -44,8 +44,9 @@ interface Fila {
   fecha: string; // YYYY-MM-DD de la jornada
   stop: string; // HH:MM — Stop Date/Time (Turbine Stoppages)
   run: string; // HH:MM o "—" — Restart Date/Time (Turbine Stoppages)
-  esfuerzoInicio: string; // HH:MM — Hora de inicio (Crear esfuerzo): RUN de la turbina anterior
-  esfuerzoFinal: string; // HH:MM o "—" — Hora de finalización (Crear esfuerzo) = mismo valor que `run`
+  esfuerzoInicio: string; // HH:MM — Esfuerzo de inicio: RUN de la turbina anterior
+  turbinaAnterior: string; // "WTG N" o "Entrada a parque" — de dónde sale esfuerzoInicio, para verificar
+  esfuerzoFinal: string; // HH:MM o "—" — Esfuerzo final = mismo valor que `run`
   horaTrabajo: string; // "H:MM" o "—" — duración esfuerzoFinal - esfuerzoInicio
   responsable: string;
 }
@@ -115,10 +116,20 @@ async function cargarFilasTurbina(
   if (!data || data.length === 0) return [];
 
   const tecnicoIds = [...new Set(data.map((d) => d.tecnico_id as string))];
-  const { data: tecnicos } = await supabase
-    .from("tecnicos")
-    .select("id, nombre")
-    .in("id", tecnicoIds);
+  const fechas = [...new Set(data.map((d) => d.fecha as string))];
+
+  const [{ data: tecnicos }, { data: contexto }] = await Promise.all([
+    supabase.from("tecnicos").select("id, nombre").in("id", tecnicoIds),
+    // Todas las turbinas del mismo parque/técnico esos días, para poder
+    // mostrar CUÁL fue "la turbina anterior" detrás de cada esfuerzo_inicio
+    // (verificación visual, no solo confiar en el número a ciegas).
+    supabase
+      .from("reporte_externo")
+      .select("fecha, wtg, esfuerzo_final, tecnico_id")
+      .eq("parque_id", parqueId)
+      .in("fecha", fechas)
+      .not("wtg", "is", null),
+  ]);
   const nombrePorTecnico = Object.fromEntries(
     (tecnicos ?? []).map((t) => [t.id as string, t.nombre as string]),
   );
@@ -131,6 +142,22 @@ async function cargarFilasTurbina(
     if (min < 0) return "—";
     return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
   };
+  const turbinaAnteriorDe = (
+    fecha: string,
+    tecnicoId: string,
+    esfuerzoInicio: string | null,
+  ): string => {
+    if (!esfuerzoInicio) return "—";
+    const previa = (contexto ?? []).find(
+      (c) =>
+        c.fecha === fecha &&
+        c.tecnico_id === tecnicoId &&
+        c.wtg !== aero.numero &&
+        c.esfuerzo_final != null &&
+        new Date(c.esfuerzo_final as string).getTime() === new Date(esfuerzoInicio).getTime(),
+    );
+    return previa ? `WTG ${previa.wtg}` : "Entrada a parque";
+  };
 
   return data
     .map((d) => ({
@@ -138,6 +165,11 @@ async function cargarFilasTurbina(
       stop: hhmm(d.parada_aero as string | null),
       run: hhmm(d.esfuerzo_final as string | null),
       esfuerzoInicio: hhmm(d.esfuerzo_inicio as string | null),
+      turbinaAnterior: turbinaAnteriorDe(
+        d.fecha as string,
+        d.tecnico_id as string,
+        d.esfuerzo_inicio as string | null,
+      ),
       esfuerzoFinal: hhmm(d.esfuerzo_final as string | null),
       horaTrabajo: duracion(
         d.esfuerzo_inicio as string | null,
@@ -423,36 +455,29 @@ export default async function AdminPage({
                 </table>
               </div>
 
-              <div>
-                <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-iner-gray">
-                  Crear esfuerzo
-                </h3>
-                <p className="mb-2 text-xs text-iner-gray">
-                  "Hora de inicio" es el RUN de la turbina anterior (o la entrada a parque
-                  si es la primera del día) — no el STOP de esta turbina.
-                </p>
-                <div className="overflow-x-auto rounded-lg border border-black/10">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-iner-gray-100 text-left">
-                      <tr>
-                        <th className="px-3 py-2 font-semibold">Responsable</th>
-                        <th className="px-3 py-2 font-semibold">Hora de inicio</th>
-                        <th className="px-3 py-2 font-semibold">Hora de finalización</th>
-                        <th className="px-3 py-2 font-semibold">Hora de trabajo</th>
+              <div className="overflow-x-auto rounded-lg border border-black/10">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-iner-gray-100 text-left">
+                    <tr>
+                      <th className="px-3 py-2 font-semibold">Responsable</th>
+                      <th className="px-3 py-2 font-semibold">Turbina anterior</th>
+                      <th className="px-3 py-2 font-semibold">Esfuerzo de inicio</th>
+                      <th className="px-3 py-2 font-semibold">Esfuerzo final</th>
+                      <th className="px-3 py-2 font-semibold">Hora de trabajo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filas.map((f, i) => (
+                      <tr key={i} className="border-t border-black/10">
+                        <td className="px-3 py-2">{f.responsable}</td>
+                        <td className="px-3 py-2 text-iner-gray">{f.turbinaAnterior}</td>
+                        <td className="px-3 py-2 font-mono">{f.esfuerzoInicio}</td>
+                        <td className="px-3 py-2 font-mono">{f.esfuerzoFinal}</td>
+                        <td className="px-3 py-2 font-mono">{f.horaTrabajo}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {filas.map((f, i) => (
-                        <tr key={i} className="border-t border-black/10">
-                          <td className="px-3 py-2">{f.responsable}</td>
-                          <td className="px-3 py-2 font-mono">{f.esfuerzoInicio}</td>
-                          <td className="px-3 py-2 font-mono">{f.esfuerzoFinal}</td>
-                          <td className="px-3 py-2 font-mono">{f.horaTrabajo}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </>
           )}
