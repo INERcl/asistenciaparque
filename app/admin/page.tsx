@@ -35,12 +35,14 @@ interface Fila {
   run: string; // HH:MM o "—"
 }
 
+/** Trae TODOS los parques, incluidos los ya inactivos/finalizados: el panel
+ *  admin se usa justo para cargar las OT de parques que ya se terminaron
+ *  (`parques.activo=false`), a diferencia del selector del técnico en campo. */
 async function cargarParques(): Promise<Parque[]> {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("parques")
     .select("id, nombre, pais, empresa_id, turbinas")
-    .eq("activo", true)
     .order("nombre");
   return (data ?? []) as Parque[];
 }
@@ -114,11 +116,11 @@ async function cargarFilasTurbina(aero: Aero, tz: string): Promise<Fila[]> {
       ts: ahoraISO(tz, new Date(e.ts_dispositivo as string)),
       maquinaId: e.maquina_id as string | null,
     }));
-    const { turbinas } = resumenJornadaDesdeEventos(normalizados, {
-      operador: "",
-      parque: "",
-      fecha: "",
-    });
+    const { turbinas } = resumenJornadaDesdeEventos(
+      normalizados,
+      { operador: "", parque: "", fecha: "" },
+      (maquinaId) => (maquinaId === aero.id ? aero.numero : null),
+    );
     for (const t of turbinas) {
       if (t.wtg === aero.numero) {
         filas.push({ fecha: fechaPorJornada[jornadaId] ?? "—", stop: t.stop, run: t.run });
