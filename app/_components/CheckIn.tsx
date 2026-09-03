@@ -46,13 +46,14 @@ import {
 import { fechaHoy, horaEstablecidaISO, horaLocal } from "@/lib/tiempo";
 import { refrescarEquipoMiembros } from "@/lib/equipo";
 import { createClient } from "@/lib/supabase/client";
-import { registrarEvento } from "@/lib/offline/registrarEvento";
+import { deshacerSalidaParque, registrarEvento } from "@/lib/offline/registrarEvento";
 import {
   ESTADO_INICIAL,
   type EstadoJornada,
   botonHabilitado,
   estadoDesdeEventos,
   getTiposJornada,
+  popTipoJornada,
 } from "@/lib/offline/estado";
 import {
   type CavidadesPorAero,
@@ -180,6 +181,11 @@ export function CheckIn({
   const [compartir, setCompartir] = useState<Compartible | null>(null);
   const [resumen, setResumen] = useState<string | null>(null); // texto ya armado
   const [resumenEsFinal, setResumenEsFinal] = useState(false);
+  // Ventana de 10s para deshacer "Salida de parque" (nunca finalizar_parque —
+  // ver ModalResumenDia). null = no aplica (finalizar_parque o ya deshecho).
+  const [deshacerInfo, setDeshacerInfo] = useState<{ eventoId: string; jornadaId: string } | null>(
+    null,
+  );
   // Cavidades inspeccionadas por aero (acumulado de la asignación) → tinte de la
   // grilla (gris/ámbar/verde) y precarga del modal de salida.
   const [cavidades, setCavidades] = useState<CavidadesPorAero>({});
@@ -334,6 +340,27 @@ export function CheckIn({
       );
     }
     setResumenEsFinal(tipo === EVENTO_TIPO.FINALIZAR_PARQUE);
+    setDeshacerInfo(
+      tipo === EVENTO_TIPO.SALIDA_PARQUE ? { eventoId: res.id, jornadaId: res.jornadaId } : null,
+    );
+  }
+
+  /** Deshace la "Salida de parque" recién registrada (ventana de 10s en
+   *  ModalResumenDia). No aplica a finalizar_parque — ver plan/diseño. */
+  async function deshacer() {
+    if (!deshacerInfo) return;
+    const { eventoId, jornadaId } = deshacerInfo;
+    try {
+      await popTipoJornada(jornadaId, EVENTO_TIPO.SALIDA_PARQUE);
+      await deshacerSalidaParque(eventoId, jornadaId);
+      setEstado(estadoDesdeEventos(await getTiposJornada(jornadaId)));
+      setUltimo("Salida deshecha · seguís en la jornada");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo deshacer la salida.");
+    } finally {
+      setDeshacerInfo(null);
+      setResumen(null);
+    }
   }
 
   /** STOP/RUN del externo: registra el evento. Con foto (Chile) ofrece compartir
@@ -848,8 +875,10 @@ export function CheckIn({
           esFinal={resumenEsFinal}
           onCerrar={() => {
             setResumen(null);
+            setDeshacerInfo(null);
             if (resumenEsFinal) onFinalizado();
           }}
+          onDeshacer={deshacerInfo ? deshacer : undefined}
         />
       )}
     </main>

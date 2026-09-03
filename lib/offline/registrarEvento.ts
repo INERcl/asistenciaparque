@@ -12,7 +12,8 @@ import {
   categoriaDeEvento,
 } from "@/lib/catalogos";
 import { ahoraISO, fechaHoy } from "@/lib/tiempo";
-import { cacheGet, cacheSet, encolar, fotoEncolar } from "./db";
+import { createClient } from "@/lib/supabase/client";
+import { cacheGet, cacheSet, encolar, fotoEncolar, outboxBorrar } from "./db";
 import { limpiarDetalle, pushEventoDetalle } from "./detalleJornada";
 import {
   type EstadoJornada,
@@ -247,4 +248,24 @@ async function finalizarAsignacion(
   await limpiarInspeccionados(asignacion.id);
   await cacheSet("sesion", "aero_actual", null);
   await cacheSet("sesion", "tecnico_acompanante", null);
+}
+
+/** Deshace un "Salida de parque" apretado hace poco (ventana de 10s, ver
+ *  ModalResumenDia). No borra nada: anula el evento (`eventos.anulado`, ya
+ *  respetado por todas las vistas/triggers) y reabre la jornada — el mismo
+ *  mecanismo de "anular" ya habilitado por RLS (0001_init.sql), sin necesitar
+ *  service role. Si el evento todavía no había salido de la outbox local,
+ *  alcanza con sacarlo de ahí (nunca llegó a viajar al server). */
+export async function deshacerSalidaParque(
+  eventoId: string,
+  jornadaId: string,
+): Promise<void> {
+  await outboxBorrar(eventoId);
+  if (!navigator.onLine) return; // offline: nunca sincronizó, ya alcanza con lo de arriba
+  const supabase = createClient();
+  await supabase.from("eventos").update({ anulado: true }).eq("id", eventoId);
+  await supabase
+    .from("jornadas")
+    .update({ estado: ESTADO_JORNADA.ABIERTA, cierre_tipo: null, cerrada_ts: null })
+    .eq("id", jornadaId);
 }

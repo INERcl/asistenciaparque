@@ -146,3 +146,17 @@ export async function pushTipoJornada(
   await cacheSet("sesion", "jornada_eventos", { jornadaId, tipos });
   return tipos;
 }
+
+/** Saca el último tipo de la secuencia del día (deshacer "Salida de parque").
+ *  No-op si el último tipo no coincide con `tipoEsperado` (evita sacar algo
+ *  distinto si hubo una carrera con otro evento registrado mientras tanto). */
+export async function popTipoJornada(
+  jornadaId: string,
+  tipoEsperado: EventoTipo,
+): Promise<EventoTipo[]> {
+  const tipos = await getTiposJornada(jornadaId);
+  if (tipos[tipos.length - 1] !== tipoEsperado) return tipos;
+  const restantes = tipos.slice(0, -1);
+  await cacheSet("sesion", "jornada_eventos", { jornadaId, tipos: restantes });
+  return restantes;
+}
