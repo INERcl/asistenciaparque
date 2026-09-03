@@ -1,15 +1,26 @@
 import Link from "next/link";
-import { resumenJornadaDesdeEventos, type EventoResumen } from "@/lib/compartir";
 import { PAIS_LABEL, TZ_POR_PAIS, type Pais } from "@/lib/catalogos";
 import { ahoraISO } from "@/lib/tiempo";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// Vista "Turbine Stoppages" (estilo SAP Field Service and Asset Management —
-// ver OT/image copy.png) para copiar 1:1 al cargar la OT en SAP: Stop Date/Time
-// (nuestro STOP = entrada_wtg) · Restart Date/Time (nuestro RUN = salida_wtg) ·
-// Internal/External Reason siempre "N/A" (catálogo de SAP, no lo inferimos —
-// dato sensible, no se adivina). Navegación en 4 pasos (País → Empresa → Parque
-// → Turbina) vía links con query params — sin JS de cliente, todo server-rendered.
+// Dos vistas de SAP Field Service and Asset Management, distintas entre sí
+// (ver OT/image.png y OT/image copy.png) — se replican ambas al pie de la letra:
+//
+// 1) "Turbine Stoppages": Stop Date/Time (nuestro STOP = entrada_wtg) · Restart
+//    Date/Time (nuestro RUN = salida_wtg que cierra esa turbina). Internal/
+//    External Reason siempre "N/A" (catálogo de SAP, no lo inferimos).
+// 2) "Crear esfuerzo": Hora de inicio · Hora de finalización · Hora de trabajo.
+//    OJO: acá "Hora de inicio" NO es el STOP de esta turbina — es el RUN de la
+//    turbina ANTERIOR (o la entrada a parque si es la primera del día): el
+//    esfuerzo cubre el traslado + la inspección como un solo bloque continuo.
+//
+// Ambas se arman desde la vista `reporte_externo` (0035_standby_clima_fila_dia_mixto.sql),
+// que ya calcula exactamente esto por turbina: `esfuerzo_inicio` (evento anterior),
+// `parada_aero` (STOP) y `esfuerzo_final` (RUN que cierra) — no se reimplementa
+// la lógica de cadena acá.
+//
+// Navegación en 4 pasos (País → Empresa → Parque → Turbina) vía links con query
+// params — sin JS de cliente, todo server-rendered.
 
 const SIN_EMPRESA = "__sin_empresa__";
 
@@ -31,8 +42,12 @@ interface Aero {
 }
 interface Fila {
   fecha: string; // YYYY-MM-DD de la jornada
-  stop: string; // HH:MM
-  run: string; // HH:MM o "—"
+  stop: string; // HH:MM — Stop Date/Time (Turbine Stoppages)
+  run: string; // HH:MM o "—" — Restart Date/Time (Turbine Stoppages)
+  esfuerzoInicio: string; // HH:MM — Hora de inicio (Crear esfuerzo): RUN de la turbina anterior
+  esfuerzoFinal: string; // HH:MM o "—" — Hora de finalización (Crear esfuerzo) = mismo valor que `run`
+  horaTrabajo: string; // "H:MM" o "—" — duración esfuerzoFinal - esfuerzoInicio
+  responsable: string;
 }
 
 /** Trae TODOS los parques, incluidos los ya inactivos/finalizados: el panel
@@ -81,53 +96,56 @@ async function cargarAvanceParque(
   return { inspeccionadas, pendientes: total != null ? Math.max(0, total - inspeccionadas) : null };
 }
 
-/** Filas Stop/Restart de una turbina: reusa el emparejamiento STOP→cierre real
- *  de `resumenJornadaDesdeEventos` (lib/compartir.ts) por cada jornada donde
- *  esa turbina tuvo un STOP, para no reimplementar la lógica de cadena. */
-async function cargarFilasTurbina(aero: Aero, tz: string): Promise<Fila[]> {
+/** Filas de una turbina para las dos vistas SAP, leídas directo de la vista
+ *  `reporte_externo` — ya trae `esfuerzo_inicio` (evento anterior: RUN de la
+ *  turbina previa o la entrada a parque si es la primera), `parada_aero`
+ *  (STOP) y `esfuerzo_final` (RUN que cierra), sin reimplementar la cadena. */
+async function cargarFilasTurbina(
+  parqueId: string,
+  aero: Aero,
+  tz: string,
+): Promise<Fila[]> {
   const supabase = createAdminClient();
-  const { data: entradas } = await supabase
-    .from("eventos")
-    .select("jornada_id")
-    .eq("maquina_id", aero.id)
-    .eq("tipo", "entrada_wtg")
-    .eq("anulado", false);
-  const jornadaIds = [...new Set((entradas ?? []).map((e) => e.jornada_id as string))];
-  if (jornadaIds.length === 0) return [];
+  const { data } = await supabase
+    .from("reporte_externo")
+    .select("fecha, esfuerzo_inicio, parada_aero, esfuerzo_final, tecnico_id")
+    .eq("parque_id", parqueId)
+    .eq("wtg", aero.numero)
+    .order("fecha");
+  if (!data || data.length === 0) return [];
 
-  const { data: jornadas } = await supabase
-    .from("jornadas")
-    .select("id, fecha")
-    .in("id", jornadaIds);
-  const fechaPorJornada = Object.fromEntries(
-    (jornadas ?? []).map((j) => [j.id as string, j.fecha as string]),
+  const tecnicoIds = [...new Set(data.map((d) => d.tecnico_id as string))];
+  const { data: tecnicos } = await supabase
+    .from("tecnicos")
+    .select("id, nombre")
+    .in("id", tecnicoIds);
+  const nombrePorTecnico = Object.fromEntries(
+    (tecnicos ?? []).map((t) => [t.id as string, t.nombre as string]),
   );
 
-  const filas: Fila[] = [];
-  for (const jornadaId of jornadaIds) {
-    const { data: eventos } = await supabase
-      .from("eventos")
-      .select("tipo, ts_dispositivo, maquina_id")
-      .eq("jornada_id", jornadaId)
-      .eq("anulado", false)
-      .order("ts_dispositivo");
-    const normalizados: EventoResumen[] = (eventos ?? []).map((e) => ({
-      tipo: e.tipo as string,
-      ts: ahoraISO(tz, new Date(e.ts_dispositivo as string)),
-      maquinaId: e.maquina_id as string | null,
-    }));
-    const { turbinas } = resumenJornadaDesdeEventos(
-      normalizados,
-      { operador: "", parque: "", fecha: "" },
-      (maquinaId) => (maquinaId === aero.id ? aero.numero : null),
-    );
-    for (const t of turbinas) {
-      if (t.wtg === aero.numero) {
-        filas.push({ fecha: fechaPorJornada[jornadaId] ?? "—", stop: t.stop, run: t.run });
-      }
-    }
-  }
-  return filas.sort((a, b) => (a.fecha + a.stop).localeCompare(b.fecha + b.stop));
+  const hhmm = (ts: string | null): string =>
+    ts ? ahoraISO(tz, new Date(ts)).slice(11, 16) : "—";
+  const duracion = (a: string | null, b: string | null): string => {
+    if (!a || !b) return "—";
+    const min = Math.round((new Date(b).getTime() - new Date(a).getTime()) / 60000);
+    if (min < 0) return "—";
+    return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
+  };
+
+  return data
+    .map((d) => ({
+      fecha: d.fecha as string,
+      stop: hhmm(d.parada_aero as string | null),
+      run: hhmm(d.esfuerzo_final as string | null),
+      esfuerzoInicio: hhmm(d.esfuerzo_inicio as string | null),
+      esfuerzoFinal: hhmm(d.esfuerzo_final as string | null),
+      horaTrabajo: duracion(
+        d.esfuerzo_inicio as string | null,
+        d.esfuerzo_final as string | null,
+      ),
+      responsable: nombrePorTecnico[d.tecnico_id as string] ?? "—",
+    }))
+    .sort((a, b) => (a.fecha + a.stop).localeCompare(b.fecha + b.stop));
 }
 
 // ---------- UI helpers (grid de tarjetas clickeables, sin JS de cliente) ----------
@@ -196,7 +214,7 @@ export default async function AdminPage({
     : null;
   const filas =
     parqueActual && aeroActual
-      ? await cargarFilasTurbina(aeroActual, TZ_POR_PAIS[parqueActual.pais])
+      ? await cargarFilasTurbina(parqueActual.id, aeroActual, TZ_POR_PAIS[parqueActual.pais])
       : [];
 
   const hrefPais = (p: string) => `/admin?pais=${p}`;
@@ -379,30 +397,64 @@ export default async function AdminPage({
           {filas.length === 0 ? (
             <p className="text-sm text-iner-gray">Sin STOP/RUN registrados para esta turbina.</p>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-black/10">
-              <table className="min-w-full text-sm">
-                <thead className="bg-iner-gray-100 text-left">
-                  <tr>
-                    <th className="px-3 py-2 font-semibold">Fecha</th>
-                    <th className="px-3 py-2 font-semibold">Stop Date/Time</th>
-                    <th className="px-3 py-2 font-semibold">Restart Date/Time</th>
-                    <th className="px-3 py-2 font-semibold">Internal Reason</th>
-                    <th className="px-3 py-2 font-semibold">External Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filas.map((f, i) => (
-                    <tr key={i} className="border-t border-black/10">
-                      <td className="px-3 py-2">{f.fecha}</td>
-                      <td className="px-3 py-2 font-mono">{f.stop}</td>
-                      <td className="px-3 py-2 font-mono">{f.run}</td>
-                      <td className="px-3 py-2 text-iner-gray">N/A</td>
-                      <td className="px-3 py-2 text-iner-gray">N/A</td>
+            <>
+              <div className="overflow-x-auto rounded-lg border border-black/10">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-iner-gray-100 text-left">
+                    <tr>
+                      <th className="px-3 py-2 font-semibold">Fecha</th>
+                      <th className="px-3 py-2 font-semibold">Stop Date/Time</th>
+                      <th className="px-3 py-2 font-semibold">Restart Date/Time</th>
+                      <th className="px-3 py-2 font-semibold">Internal Reason</th>
+                      <th className="px-3 py-2 font-semibold">External Reason</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {filas.map((f, i) => (
+                      <tr key={i} className="border-t border-black/10">
+                        <td className="px-3 py-2">{f.fecha}</td>
+                        <td className="px-3 py-2 font-mono">{f.stop}</td>
+                        <td className="px-3 py-2 font-mono">{f.run}</td>
+                        <td className="px-3 py-2 text-iner-gray">N/A</td>
+                        <td className="px-3 py-2 text-iner-gray">N/A</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div>
+                <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-iner-gray">
+                  Crear esfuerzo
+                </h3>
+                <p className="mb-2 text-xs text-iner-gray">
+                  "Hora de inicio" es el RUN de la turbina anterior (o la entrada a parque
+                  si es la primera del día) — no el STOP de esta turbina.
+                </p>
+                <div className="overflow-x-auto rounded-lg border border-black/10">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-iner-gray-100 text-left">
+                      <tr>
+                        <th className="px-3 py-2 font-semibold">Responsable</th>
+                        <th className="px-3 py-2 font-semibold">Hora de inicio</th>
+                        <th className="px-3 py-2 font-semibold">Hora de finalización</th>
+                        <th className="px-3 py-2 font-semibold">Hora de trabajo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filas.map((f, i) => (
+                        <tr key={i} className="border-t border-black/10">
+                          <td className="px-3 py-2">{f.responsable}</td>
+                          <td className="px-3 py-2 font-mono">{f.esfuerzoInicio}</td>
+                          <td className="px-3 py-2 font-mono">{f.esfuerzoFinal}</td>
+                          <td className="px-3 py-2 font-mono">{f.horaTrabajo}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
           )}
         </section>
       )}
