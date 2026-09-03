@@ -459,7 +459,6 @@ export default async function AdminPage({
                 <table className="min-w-full text-sm">
                   <thead className="bg-iner-gray-100 text-left">
                     <tr>
-                      <th className="px-3 py-2 font-semibold">Responsable</th>
                       <th className="px-3 py-2 font-semibold">Turbina anterior</th>
                       <th className="px-3 py-2 font-semibold">Esfuerzo de inicio</th>
                       <th className="px-3 py-2 font-semibold">Esfuerzo final</th>
@@ -469,7 +468,6 @@ export default async function AdminPage({
                   <tbody>
                     {filas.map((f, i) => (
                       <tr key={i} className="border-t border-black/10">
-                        <td className="px-3 py-2">{f.responsable}</td>
                         <td className="px-3 py-2 text-iner-gray">{f.turbinaAnterior}</td>
                         <td className="px-3 py-2 font-mono">{f.esfuerzoInicio}</td>
                         <td className="px-3 py-2 font-mono">{f.esfuerzoFinal}</td>
