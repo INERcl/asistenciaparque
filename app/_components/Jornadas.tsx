@@ -39,6 +39,7 @@ interface JornadaRow {
 interface EventoRow {
   tipo: string;
   ts_dispositivo: string;
+  ts_servidor: string | null;
   maquina_id: string | null;
   palas: string[] | null;
   motivo: string | null;
@@ -181,7 +182,7 @@ function JornadaCard({
         const { data, error: err } = await supabase
           .from("eventos")
           .select(
-            "tipo, ts_dispositivo, maquina_id, palas, motivo, motivo_otro, tecnico_acompanante, aeros(numero)",
+            "tipo, ts_dispositivo, ts_servidor, maquina_id, palas, motivo, motivo_otro, tecnico_acompanante, aeros(numero)",
           )
           .eq("jornada_id", jornada.id)
           .eq("anulado", false)
@@ -197,6 +198,7 @@ function JornadaCard({
             // Supabase devuelve el timestamptz en UTC; lo reexpresamos en la hora
             // de pared del parque para que el HH:MM salga correcto (ver hhmm).
             ts: ahoraISO(tz, new Date(e.ts_dispositivo)),
+            tsRegistro: e.ts_servidor,
             maquinaId: e.maquina_id,
             numero: aero?.numero ?? null,
             palas: e.palas,

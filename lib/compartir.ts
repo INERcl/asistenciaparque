@@ -113,6 +113,7 @@ const SIN_HORA = "—";
 export interface EventoResumen {
   tipo: EventoTipo | string;
   ts: string; // ISO 8601 local del parque
+  tsRegistro?: string | null; // recepción en servidor, para retiros anticipados históricos
   maquinaId?: string | null;
   numero?: number | null; // WTG, si viene embebido (Supabase); si no, lo resuelve resolverWtg
   palas?: string[] | null; // cavidades cerradas en la salida (interno); null = turbina entera
@@ -140,6 +141,7 @@ export interface ResumenJornada {
   turbinas: TurbinaResumen[];
   standbys: StandbyResumen[];
   salida: string | null; // HH:MM del cierre del día/parque
+  motivoSalida?: string | null;
 }
 
 const hhmm = (tsISO: string): string => tsISO.slice(11, 16); // HH:MM
@@ -192,6 +194,7 @@ export function resumenJornadaDesdeEventos(
   // de cuál turbina (ver cierreDeAero).
   const ventanas: { entradaIdx: number; cierreIdx: number; turbina: TurbinaResumen }[] = [];
   let salida: string | null = null;
+  let motivoSalida: string | null = null;
 
   for (let i = 0; i < orden.length; i++) {
     const e = orden[i];
@@ -202,17 +205,25 @@ export function resumenJornadaDesdeEventos(
       const turbina: TurbinaResumen = {
         wtg,
         stop: hhmm(e.ts),
-        run: cierre ? hhmm(cierre.evento.ts) : SIN_HORA,
+        run: cierre?.evento.tipo === EVENTO_TIPO.SALIDA_WTG ? hhmm(cierre.evento.ts) : SIN_HORA,
         tecnicoAcompanante: e.tecnicoAcompanante ?? null,
         standbys: [],
       };
       turbinas.push(turbina);
       if (cierre) ventanas.push({ entradaIdx: i, cierreIdx: cierre.indice, turbina });
     } else if (e.tipo === EVENTO_TIPO.INICIO_STANDBY) {
+      const etiqueta = etiquetaStandby(e.motivo, e.motivoOtro);
+      // El retiro puede repetir el inicio de un standby que ya estaba abierto.
+      const anterior = orden[i - 1];
+      if (anterior?.tipo === EVENTO_TIPO.INICIO_STANDBY &&
+          etiquetaStandby(anterior.motivo, anterior.motivoOtro) === etiqueta) continue;
+      let finIdx = i + 1;
+      while (orden[finIdx]?.tipo === EVENTO_TIPO.INICIO_STANDBY &&
+             etiquetaStandby(orden[finIdx].motivo, orden[finIdx].motivoOtro) === etiqueta) finIdx++;
       const item: StandbyResumen = {
-        etiqueta: etiquetaStandby(e.motivo, e.motivoOtro),
+        etiqueta,
         inicio: hhmm(e.ts),
-        fin: sig != null ? hhmm(sig.ts) : SIN_HORA,
+        fin: orden[finIdx] ? hhmm(orden[finIdx].ts) : SIN_HORA,
       };
       const ventana = ventanas.find((v) => v.entradaIdx < i && i < v.cierreIdx);
       if (ventana) ventana.turbina.standbys.push(item);
@@ -222,9 +233,18 @@ export function resumenJornadaDesdeEventos(
       e.tipo === EVENTO_TIPO.FINALIZAR_PARQUE
     ) {
       salida = hhmm(e.ts);
+      motivoSalida = null;
+      if (e.tipo === EVENTO_TIPO.SALIDA_PARQUE) {
+        if (e.motivo) motivoSalida = etiquetaStandby(e.motivo, e.motivoOtro);
+        else if (e.tsRegistro && Date.parse(e.ts) - Date.parse(e.tsRegistro) > 60000 &&
+                 orden[i - 1]?.tipo === EVENTO_TIPO.INICIO_STANDBY) {
+          // Versiones anteriores fijaban una salida futura sin guardar su motivo.
+          motivoSalida = etiquetaStandby(orden[i - 1].motivo, orden[i - 1].motivoOtro);
+        }
+      }
     }
   }
-  return { ...meta, turbinas, standbys, salida };
+  return { ...meta, turbinas, standbys, salida, motivoSalida };
 }
 
 /** Texto copiable del resumen detallado de la jornada (formato acordado con el equipo). */
@@ -236,9 +256,13 @@ export function textoResumenJornada(d: ResumenJornada): string {
     `Parque: ${d.parque}`,
     `Turbinas inspeccionadas: ${inspeccionadas}`,
   ];
+  let tecnicoAnterior = "";
   for (const t of d.turbinas) {
     lineas.push(`${t.wtg != null ? `WTG ${t.wtg}` : "WTG —"}: STOP: ${t.stop} - RUN: ${t.run}`);
-    if (t.tecnicoAcompanante) lineas.push(`Técnico acompañante: ${t.tecnicoAcompanante}`);
+    const tecnico = t.tecnicoAcompanante?.trim().replace(/\s+/g, " ") ?? "";
+    const clave = tecnico.toLocaleLowerCase("es");
+    if (tecnico && clave !== tecnicoAnterior) lineas.push(`Técnico acompañante: ${tecnico}`);
+    tecnicoAnterior = clave;
   }
   // Sección aparte con todos los stand-by del día: los de una turbina llevan su
   // WTG; los sueltos (fuera de cualquier ventana STOP→RUN) van solo con el motivo.
@@ -247,14 +271,14 @@ export function textoResumenJornada(d: ResumenJornada): string {
     lineas.push("Stand-By:");
     for (const t of d.turbinas) {
       for (const s of t.standbys) {
-        lineas.push(`WTG ${t.wtg ?? "—"} ${s.etiqueta}`);
+        lineas.push(`WTG ${t.wtg ?? "—"} ${s.etiqueta} desde las ${s.inicio} a ${s.fin}`);
       }
     }
     for (const s of d.standbys) {
-      lineas.push(s.etiqueta);
+      lineas.push(`${s.etiqueta} desde las ${s.inicio} a ${s.fin}`);
     }
   }
-  if (d.salida) lineas.push(`Salida del parque: ${d.salida}`);
+  if (d.salida) lineas.push(`Salida de parque: ${d.salida}${d.motivoSalida ? ` por ${d.motivoSalida}` : ""}`);
   lineas.push(`Fecha: ${d.fecha}`);
   return lineas.join("\n");
 }

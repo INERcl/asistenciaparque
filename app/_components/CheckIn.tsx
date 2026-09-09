@@ -307,12 +307,14 @@ export function CheckIn({
     const eventos = asignacion
       ? await leerEventosDetalle(`${asignacion.id}_${fechaHoy(asignacion.tz)}`)
       : [];
-    const res = await registrar({ tipo, tsOverride: opts?.tsOverride }, etq(tipo));
+    const res = await registrar({ tipo, tsOverride: opts?.tsOverride,
+      motivo: opts?.standby?.motivo, motivoOtro: opts?.standby?.motivoOtro }, etq(tipo));
     if (!res || !asignacion) return;
     const f = fechaHoy(asignacion.tz); // YYYY-MM-DD
     const numeroDe = (maquinaId: string | null | undefined) =>
       aeros.find((a) => a.id === maquinaId)?.numero ?? null;
-    const conCierre = [...eventos, { tipo: EVENTO_TIPO.SALIDA_PARQUE, ts: res.ts }];
+    const conCierre = [...eventos, { tipo, ts: res.ts,
+      motivo: opts?.standby?.motivo, motivoOtro: opts?.standby?.motivoOtro }];
     if (externo) {
       setResumen(
         textoResumenJornada(
@@ -807,7 +809,9 @@ export function CheckIn({
       {modal === "salida" && (
         <ModalConfirmar
           titulo="Salida de parque"
-          detalle="Cierra la jornada de hoy y cuenta la última turbina como inspeccionada. Podés volver mañana al mismo parque."
+          detalle={externo
+            ? "Cierra la jornada de hoy. Una turbina sin RUN queda sin inspección confirmada. Podés volver mañana al mismo parque."
+            : "Cierra la jornada de hoy y cuenta la última turbina como inspeccionada. Podés volver mañana al mismo parque."}
           textoOk="Registrar salida"
           onCerrar={() => setModal(null)}
           onOk={() => void cerrar(EVENTO_TIPO.SALIDA_PARQUE)}
