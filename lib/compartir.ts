@@ -20,12 +20,14 @@ export function textoEvidencia({
   operador,
   parque,
   numeroWtg,
+  nombreWtg,
   tsISO,
 }: {
   tipo: "stop" | "run";
   operador: string;
   parque: string;
   numeroWtg: number;
+  nombreWtg?: string | null; // etiqueta propia del aero (ej. "TM05"); si no, el número
   tsISO: string;
 }): string {
   const hora = tsISO.slice(11, 16); // HH:MM
@@ -35,7 +37,7 @@ export function textoEvidencia({
     `Operador: ${operador}`,
     `Parque: ${parque}`,
     `*${tipo.toUpperCase()}*`,
-    `Turbina: ${numeroWtg}`,
+    `Turbina: ${nombreWtg?.trim() && !/^WTG/i.test(nombreWtg.trim()) ? nombreWtg.trim() : numeroWtg}`,
     `Hora: ${hora}`,
     `Fecha: ${fecha}`,
   ].join("\n");
@@ -109,6 +111,13 @@ export async function copiarTexto(texto: string): Promise<boolean> {
 
 const SIN_HORA = "—";
 
+/** Etiqueta visible de la turbina: el nombre propio del aero si no es "WTG N" (ej. "TM05"). */
+function etiquetaTurbina(nombre: string | null | undefined, wtg: number | null): string {
+  const n = nombre?.trim();
+  if (n && !/^WTG/i.test(n)) return n;
+  return `WTG ${wtg ?? "—"}`;
+}
+
 /** Evento normalizado (ya con hora de pared del parque) para armar el resumen. */
 export interface EventoResumen {
   tipo: EventoTipo | string;
@@ -116,6 +125,7 @@ export interface EventoResumen {
   tsRegistro?: string | null; // recepción en servidor, para retiros anticipados históricos
   maquinaId?: string | null;
   numero?: number | null; // WTG, si viene embebido (Supabase); si no, lo resuelve resolverWtg
+  nombre?: string | null; // etiqueta propia del aero (ej. "TM05"); si no, se usa "WTG N"
   palas?: string[] | null; // cavidades cerradas en la salida (interno); null = turbina entera
   motivo?: StandbyMotivo | string | null;
   motivoOtro?: string | null;
@@ -124,6 +134,7 @@ export interface EventoResumen {
 
 export interface TurbinaResumen {
   wtg: number | null;
+  etiqueta?: string; // "WTG N" o el nombre propio del aero (ej. "TM05")
   stop: string; // HH:MM
   run: string; // HH:MM o "—"
   tecnicoAcompanante?: string | null; // técnico de apoyo Siemens (si aplica)
@@ -186,6 +197,7 @@ export function resumenJornadaDesdeEventos(
   eventos: EventoResumen[],
   meta: { operador: string; parque: string; fecha: string },
   resolverWtg?: (maquinaId: string | null | undefined) => number | null,
+  resolverNombre?: (maquinaId: string | null | undefined) => string | null,
 ): ResumenJornada {
   const orden = [...eventos].sort((a, b) => a.ts.localeCompare(b.ts));
   const turbinas: TurbinaResumen[] = [];
@@ -204,6 +216,7 @@ export function resumenJornadaDesdeEventos(
       const wtg = e.numero ?? resolverWtg?.(e.maquinaId) ?? null;
       const turbina: TurbinaResumen = {
         wtg,
+        etiqueta: etiquetaTurbina(e.nombre ?? resolverNombre?.(e.maquinaId), wtg),
         stop: hhmm(e.ts),
         run: cierre?.evento.tipo === EVENTO_TIPO.SALIDA_WTG ? hhmm(cierre.evento.ts) : SIN_HORA,
         tecnicoAcompanante: e.tecnicoAcompanante ?? null,
@@ -258,7 +271,7 @@ export function textoResumenJornada(d: ResumenJornada): string {
   ];
   let tecnicoAnterior = "";
   for (const t of d.turbinas) {
-    lineas.push(`${t.wtg != null ? `WTG ${t.wtg}` : "WTG —"}: STOP: ${t.stop} - RUN: ${t.run}`);
+    lineas.push(`${t.etiqueta ?? etiquetaTurbina(null, t.wtg)}: STOP: ${t.stop} - RUN: ${t.run}`);
     const tecnico = t.tecnicoAcompanante?.trim().replace(/\s+/g, " ") ?? "";
     const clave = tecnico.toLocaleLowerCase("es");
     if (tecnico && clave !== tecnicoAnterior) lineas.push(`Técnico acompañante: ${tecnico}`);
@@ -271,7 +284,7 @@ export function textoResumenJornada(d: ResumenJornada): string {
     lineas.push("Stand-By:");
     for (const t of d.turbinas) {
       for (const s of t.standbys) {
-        lineas.push(`WTG ${t.wtg ?? "—"} ${s.etiqueta} desde las ${s.inicio} a ${s.fin}`);
+        lineas.push(`${t.etiqueta ?? etiquetaTurbina(null, t.wtg)} ${s.etiqueta} desde las ${s.inicio} a ${s.fin}`);
       }
     }
     for (const s of d.standbys) {
@@ -289,6 +302,7 @@ export function textoResumenJornada(d: ResumenJornada): string {
 
 export interface TurbinaInterna {
   wtg: number | null;
+  etiqueta?: string; // "WTG N" o el nombre propio del aero (ej. "TM05")
   traslado: string; // HH:MM o "—" (el traslado_maquina previo a la subida)
   subida: string; // HH:MM
   salida: string; // HH:MM o "—"
@@ -346,6 +360,7 @@ export function resumenInternoDesdeEventos(
   eventos: EventoResumen[],
   meta: { dia: string; fecha: string; parque: string; equipo: string },
   resolverWtg?: (maquinaId: string | null | undefined) => number | null,
+  resolverNombre?: (maquinaId: string | null | undefined) => string | null,
 ): ResumenInterno {
   const orden = [...eventos].sort((a, b) => a.ts.localeCompare(b.ts));
   const turbinas: TurbinaInterna[] = [];
@@ -367,6 +382,7 @@ export function resumenInternoDesdeEventos(
       const wtg = e.numero ?? resolverWtg?.(e.maquinaId) ?? null;
       const turbina: TurbinaInterna = {
         wtg,
+        etiqueta: etiquetaTurbina(e.nombre ?? resolverNombre?.(e.maquinaId), wtg),
         traslado: ultimoTraslado ?? SIN_HORA,
         subida: hhmm(e.ts),
         salida: cierre ? hhmm(cierre.evento.ts) : SIN_HORA,
@@ -419,7 +435,7 @@ export function textoResumenInterno(d: ResumenInterno): string {
   for (const t of d.turbinas) {
     lineas.push(
       `Traslado turbina: ${t.traslado}`,
-      `*WTG ${t.wtg ?? "—"}*`,
+      `*${t.etiqueta ?? etiquetaTurbina(null, t.wtg)}*`,
       `Subida: ${t.subida}`,
       `Salida: ${t.salida}`,
     );
@@ -430,7 +446,7 @@ export function textoResumenInterno(d: ResumenInterno): string {
     lineas.push("Stand-By:");
     for (const t of d.turbinas) {
       for (const s of t.standbys) {
-        lineas.push(`WTG ${t.wtg ?? "—"} ${s.motivo}`);
+        lineas.push(`${t.etiqueta ?? etiquetaTurbina(null, t.wtg)} ${s.motivo}`);
       }
     }
     for (const s of d.standbys) {

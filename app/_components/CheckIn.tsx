@@ -355,6 +355,8 @@ export function CheckIn({
     const f = fechaHoy(asignacion.tz); // YYYY-MM-DD
     const numeroDe = (maquinaId: string | null | undefined) =>
       aeros.find((a) => a.id === maquinaId)?.numero ?? null;
+    const nombreDe = (maquinaId: string | null | undefined) =>
+      aeros.find((a) => a.id === maquinaId)?.nombre ?? null;
     const conCierre = [...eventos, { tipo, ts: res.ts,
       motivo: opts?.standby?.motivo, motivoOtro: opts?.standby?.motivoOtro }];
     if (externo) {
@@ -368,6 +370,7 @@ export function CheckIn({
               fecha: `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(0, 4)}`,
             },
             numeroDe,
+            nombreDe,
           ),
         ),
       );
@@ -379,6 +382,7 @@ export function CheckIn({
             conCierre,
             { ...encabezadoDia(f), parque: asignacion.parque_nombre, equipo },
             numeroDe,
+            nombreDe,
           ),
         ),
       );
@@ -436,6 +440,7 @@ export function CheckIn({
           operador: nombreTecnico ?? "—",
           parque: asignacion?.parque_nombre ?? "—",
           numeroWtg: aero.numero,
+          nombreWtg: aero.nombre,
           tsISO: res.ts,
         }),
         blob: foto,
