@@ -45,7 +45,7 @@ interface EventoRow {
   motivo: string | null;
   motivo_otro: string | null;
   tecnico_acompanante: string | null;
-  aeros: { numero: number } | { numero: number }[] | null;
+  aeros: { numero: number; nombre: string | null } | { numero: number; nombre: string | null }[] | null;
 }
 
 /** YYYY-MM-DD → DD/MM/YYYY. */
@@ -182,7 +182,7 @@ function JornadaCard({
         const { data, error: err } = await supabase
           .from("eventos")
           .select(
-            "tipo, ts_dispositivo, ts_servidor, maquina_id, palas, motivo, motivo_otro, tecnico_acompanante, aeros(numero)",
+            "tipo, ts_dispositivo, ts_servidor, maquina_id, palas, motivo, motivo_otro, tecnico_acompanante, aeros(numero, nombre)",
           )
           .eq("jornada_id", jornada.id)
           .eq("anulado", false)
@@ -201,6 +201,7 @@ function JornadaCard({
             tsRegistro: e.ts_servidor,
             maquinaId: e.maquina_id,
             numero: aero?.numero ?? null,
+            nombre: aero?.nombre ?? null,
             palas: e.palas,
             motivo: e.motivo,
             motivoOtro: e.motivo_otro,
