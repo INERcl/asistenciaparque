@@ -21,3 +21,9 @@ scripts/tecnicos.json
 /n8n/*.md
 /scripts/*.md
 /supabase/
+
+# Planillas e imágenes internas (repo público): no versionar
+/csv/
+/*.xlsx
+/*.csv
+/flujo no oficial.jpg
