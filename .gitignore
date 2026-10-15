@@ -34,3 +34,6 @@ scripts/tecnicos.json
 /external csv/
 /image*.png
 /.vscode/
+
+# n8n (workflows locales, pueden contener credenciales): no versionar
+/n8n/
