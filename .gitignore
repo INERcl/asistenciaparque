@@ -14,3 +14,10 @@ public/swe-worker-*.js
 
 # Lista real de técnicos (contiene contraseñas): nunca versionar
 scripts/tecnicos.json
+
+# Documentación interna y SQL (repo público): no versionar
+/*.md
+!/README.md
+/n8n/*.md
+/scripts/*.md
+/supabase/
