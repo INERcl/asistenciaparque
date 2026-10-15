@@ -27,3 +27,10 @@ scripts/tecnicos.json
 /*.xlsx
 /*.csv
 /flujo no oficial.jpg
+
+# Archivos locales sueltos: no versionar
+/OT/
+/OT *.jp*g
+/external csv/
+/image*.png
+/.vscode/
